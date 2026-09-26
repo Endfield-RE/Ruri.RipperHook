@@ -44,7 +44,6 @@ internal static class UnityShaderMetadataBuilder
         };
 
         metadata.ParsedForm.Name = parsedForm.Name_R;
-        ReconcileNames(metadata);
         metadata.ParsedForm.FallbackName = parsedForm.FallbackName?.String ?? string.Empty;
         metadata.Offsets = ReadUInt32Matrix(shader.Offsets_AssetList_AssetList_UInt32, shader.Offsets_AssetList_UInt32);
         metadata.CompressedLengths = ReadUInt32Matrix(shader.CompressedLengths_AssetList_AssetList_UInt32, shader.CompressedLengths_AssetList_UInt32);
@@ -110,34 +109,6 @@ internal static class UnityShaderMetadataBuilder
         }
 
         return metadata;
-    }
-
-    private static void ReconcileNames(UnityShaderMetadata metadata)
-    {
-        // A shader carries its name in two places -- the object's m_Name and the
-        // SerializedShader's own m_Name -- and a build can leave either one empty
-        // (Endfield strips the object name, Unity's built-in shaders strip it too).
-        // Whichever survives is the name, so both sides end up able to answer.
-        bool hasObjectName = !string.IsNullOrEmpty(metadata.Name);
-        bool hasShaderLabName = !string.IsNullOrEmpty(metadata.ParsedForm.Name);
-        if (hasShaderLabName == hasObjectName)
-        {
-            if (!hasShaderLabName)
-            {
-                Console.WriteLine("[ShaderDecompile] !! shader carries no name on either side "
-                    + "(object m_Name and SerializedShader m_Name are both empty) -- writing an unnamed ShaderLab block");
-            }
-            return;
-        }
-
-        if (hasShaderLabName)
-        {
-            metadata.Name = metadata.ParsedForm.Name;
-        }
-        else
-        {
-            metadata.ParsedForm.Name = metadata.Name;
-        }
     }
 
     public static void BackfillProgramSources(UnityShaderMetadata metadata, IReadOnlyList<ProgramResultLocation> locations, DecompileResult[] results)

@@ -1,4 +1,4 @@
-﻿using System.Buffers.Binary;
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -17,10 +17,6 @@ public sealed class CabTable
     public required int[] DistinctFileOffsets { get; init; }    public required int[] FileIndex { get; init; }
     public required byte[] EntryFileNameBlob { get; init; }
     public required int[] EntryFileNameOffsets { get; init; }
-    public required byte[] FactBlob { get; init; }
-    public required int[] FactOffsets { get; init; }
-    public required int[] FactStarts { get; init; }
-
     public required byte[] ContainerPathBlob { get; init; }
     public required int[] ContainerPathOffsets { get; init; }    public required int[] ContainerPathStarts { get; init; }
     public required int[] ClassIdsFlat { get; init; }
@@ -29,58 +25,13 @@ public sealed class CabTable
     public required int[] ReverseFlat { get; init; }    public required int[] ReverseStarts { get; init; }
     public int FileCount => DistinctFileOffsets.Length - 1;
 
-    /// <summary>How many cab ids exist at all: the archives the map holds, plus the PHANTOMS --
-    /// names something in the map depends on that the map itself does not hold.
-    ///
-    /// A phantom is a real id: it comes back out of every dependency walk, so every per-cab table
-    /// here covers one and answers nothing for it. Sizing them to <see cref="Count"/> instead made
-    /// "ask anything but the name about a phantom" an out-of-bounds read that surfaced as an
-    /// IndexOutOfRangeException three layers away, in whatever asked.</summary>
-    public int TotalCount => Count + PhantomCount;
-
     public string CabName(int id) => Utf8(CabBlob, CabOffsets, id);
     public string DistinctFile(int fileIndex) => Utf8(DistinctFileBlob, DistinctFileOffsets, fileIndex);
-    public string RelativePath(int id) => FileIndex[id] < 0 ? string.Empty : DistinctFile(FileIndex[id]);
+    public string RelativePath(int id) => DistinctFile(FileIndex[id]);
     public string EntryFileName(int id) => Utf8(EntryFileNameBlob, EntryFileNameOffsets, id);
-
-    /// <summary>A distinct file, where it is on disk.</summary>
-    public string FullPath(int fileIndex) => Path.GetFullPath(Path.Combine(BaseFolder, DistinctFile(fileIndex)));
-
-    /// <summary>Whether this map files at least one asset under a file, by its full path. A file
-    /// the map files nothing under holds no asset -- an archive index, a catalog -- which is the one
-    /// thing a reader looking for such a file among thousands of archives can ask without opening
-    /// any of them.</summary>
-    public bool HoldsAssets(string fullPath) =>
-        LazyInitializer.EnsureInitialized(ref _mappedFiles, MappedFiles).Contains(fullPath);
-
-    private HashSet<string>? _mappedFiles;
-
-    private HashSet<string> MappedFiles()
-    {
-        HashSet<string> files = new(FileCount, StringComparer.OrdinalIgnoreCase);
-        for (int fileIndex = 0; fileIndex < FileCount; fileIndex++)
-        {
-            files.Add(FullPath(fileIndex));
-        }
-        return files;
-    }
-
-    public ReadOnlySpan<byte> CabNameUtf8(int id) => CabBlob.AsSpan(CabOffsets[id], CabOffsets[id + 1] - CabOffsets[id]);
 
     public ReadOnlySpan<byte> DistinctFileUtf8(int fileIndex)
         => DistinctFileBlob.AsSpan(DistinctFileOffsets[fileIndex], DistinctFileOffsets[fileIndex + 1] - DistinctFileOffsets[fileIndex]);
-
-    /// <summary>How many facts a decoder stated about this archive.</summary>
-    public int FactCount(int id) => FactStarts[id + 1] - FactStarts[id];
-
-    /// <summary>One fact, exactly as the decoder that harvested it wrote it.</summary>
-    public string Fact(int id, int factIndex) => Utf8(FactBlob, FactOffsets, FactStarts[id] + factIndex);
-
-    public ReadOnlySpan<byte> FactUtf8(int id, int factIndex)
-    {
-        int row = FactStarts[id] + factIndex;
-        return FactBlob.AsSpan(FactOffsets[row], FactOffsets[row + 1] - FactOffsets[row]);
-    }
 
     public int ContainerPathCount(int id) => ContainerPathStarts[id + 1] - ContainerPathStarts[id];
 
@@ -106,40 +57,6 @@ public sealed class CabTable
 
     private static string Utf8(byte[] blob, int[] offsets, int index)
         => Encoding.UTF8.GetString(blob, offsets[index], offsets[index + 1] - offsets[index]);
-
-    /// <summary>A starts array widened to cover the phantoms, each of them an EMPTY range: the
-    /// last boundary is repeated, so start and end coincide and the span is zero-length.</summary>
-    private static int[] WithPhantoms(int[] starts, int total)
-    {
-        if (starts.Length >= total + 1)
-        {
-            return starts;
-        }
-        int[] widened = new int[total + 1];
-        Array.Copy(starts, widened, starts.Length);
-        for (int index = starts.Length; index <= total; index++)
-        {
-            widened[index] = starts[^1];
-        }
-        return widened;
-    }
-
-    /// <summary>The file index widened to cover the phantoms, each of them filed under NO file --
-    /// which is what a phantom is: a name with no archive behind it.</summary>
-    private static int[] WithoutFiles(int[] fileIndex, int total)
-    {
-        if (fileIndex.Length >= total)
-        {
-            return fileIndex;
-        }
-        int[] widened = new int[total];
-        Array.Copy(fileIndex, widened, fileIndex.Length);
-        for (int index = fileIndex.Length; index < total; index++)
-        {
-            widened[index] = -1;
-        }
-        return widened;
-    }
 
     private int _maxContainerPathUtf8Length = -1;
 
@@ -290,8 +207,6 @@ public sealed class CabTable
         BlobBuilder nameBlob = new(count);
         BlobBuilder pathBlob = new(count);
         int[] pathStarts = new int[count + 1];
-        BlobBuilder factBlob = new(count);
-        int[] factStarts = new int[count + 1];
         List<int> classFlat = new();
         int[] classStarts = new int[count + 1];
         List<int> depsFlat = new();
@@ -311,11 +226,6 @@ public sealed class CabTable
             {
                 pathBlob.Add(path);
             }
-            factStarts[id + 1] = factStarts[id] + entry.Facts.Count;
-            foreach (string fact in entry.Facts)
-            {
-                factBlob.Add(fact);
-            }
             classStarts[id + 1] = classStarts[id] + entry.ClassIds.Count;
             classFlat.AddRange(entry.ClassIds);
             depStarts[id + 1] = depStarts[id] + entry.Dependencies.Count;
@@ -327,7 +237,6 @@ public sealed class CabTable
 
         int[] depFlatArray = depsFlat.ToArray();
         (int[] reverseStarts, int[] reverseFlat) = BuildReverse(count, phantoms.Count, depStarts, depFlatArray);
-        int total = count + phantoms.Count;
 
         return new CabTable
         {
@@ -338,19 +247,16 @@ public sealed class CabTable
             CabOffsets = cabBlob.Offsets(),
             DistinctFileBlob = fileBlob.Blob(),
             DistinctFileOffsets = fileBlob.Offsets(),
-            FileIndex = WithoutFiles(fileIndex, total),
+            FileIndex = fileIndex,
             EntryFileNameBlob = nameBlob.Blob(),
-            EntryFileNameOffsets = WithPhantoms(nameBlob.Offsets(), total),
+            EntryFileNameOffsets = nameBlob.Offsets(),
             ContainerPathBlob = pathBlob.Blob(),
             ContainerPathOffsets = pathBlob.Offsets(),
-            ContainerPathStarts = WithPhantoms(pathStarts, total),
-            FactBlob = factBlob.Blob(),
-            FactOffsets = factBlob.Offsets(),
-            FactStarts = WithPhantoms(factStarts, total),
+            ContainerPathStarts = pathStarts,
             ClassIdsFlat = classFlat.ToArray(),
-            ClassIdStarts = WithPhantoms(classStarts, total),
+            ClassIdStarts = classStarts,
             DependenciesFlat = depFlatArray,
-            DependencyStarts = WithPhantoms(depStarts, total),
+            DependencyStarts = depStarts,
             ReverseFlat = reverseFlat,
             ReverseStarts = reverseStarts,
         };
@@ -378,7 +284,7 @@ public sealed class CabTable
     }
 
 
-    internal const uint Magic7 = 0x52434D37;
+    internal const uint Magic6 = 0x52434D36;
     public void Save(string outPath)
     {
         string outDir = Path.GetDirectoryName(Path.GetFullPath(outPath))!;
@@ -387,15 +293,14 @@ public sealed class CabTable
 
         using FileStream stream = new(outPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20);
         using BinaryWriter writer = new(stream, Encoding.UTF8, leaveOpen: false);
-        writer.Write(Magic7);
-        writer.Write(7);
+        writer.Write(Magic6);
+        writer.Write(6);
         writer.Write(baseUtf8.Length);
         writer.Write(baseUtf8);
         writer.Write(Count);
         writer.Write(PhantomCount);
         writer.Write(FileCount);
         writer.Write(ContainerPathOffsets.Length - 1);
-        writer.Write(FactOffsets.Length - 1);
         writer.Write(ClassIdsFlat.Length);
         writer.Write(DependenciesFlat.Length);
 
@@ -403,21 +308,15 @@ public sealed class CabTable
         WriteBlob(writer, CabBlob);
         WriteInts(writer, DistinctFileOffsets);
         WriteBlob(writer, DistinctFileBlob);
-        // The per-cab tables are widened in memory so a phantom id is answerable; on disk they
-        // stay what the format states -- one entry per archive the map HOLDS -- and the widening
-        // is redone on load. Writing the padding would be writing a second, derivable truth.
-        WriteInts(writer, FileIndex, Count);
-        WriteInts(writer, EntryFileNameOffsets, Count + 1);
+        WriteInts(writer, FileIndex);
+        WriteInts(writer, EntryFileNameOffsets);
         WriteBlob(writer, EntryFileNameBlob);
-        WriteInts(writer, ContainerPathStarts, Count + 1);
+        WriteInts(writer, ContainerPathStarts);
         WriteInts(writer, ContainerPathOffsets);
         WriteBlob(writer, ContainerPathBlob);
-        WriteInts(writer, FactStarts, Count + 1);
-        WriteInts(writer, FactOffsets);
-        WriteBlob(writer, FactBlob);
-        WriteInts(writer, ClassIdStarts, Count + 1);
+        WriteInts(writer, ClassIdStarts);
         WriteInts(writer, ClassIdsFlat);
-        WriteInts(writer, DependencyStarts, Count + 1);
+        WriteInts(writer, DependencyStarts);
         WriteInts(writer, DependenciesFlat);
     }
 
@@ -428,12 +327,12 @@ public sealed class CabTable
         Span<byte> header = stackalloc byte[8];
         if (stream.Length < header.Length)
         {
-            throw new InvalidDataException($"'{path}' is not an RCM7 cabmap -- rebuild it (Build writes RCM7 only).");
+            throw new InvalidDataException($"'{path}' is not an RCM6 cabmap -- rebuild it (Build writes RCM6 only).");
         }
         stream.ReadExactly(header);
-        if (BinaryPrimitives.ReadUInt32LittleEndian(header) != Magic7)
+        if (BinaryPrimitives.ReadUInt32LittleEndian(header) != Magic6)
         {
-            throw new InvalidDataException($"'{path}' is not an RCM7 cabmap -- rebuild it (Build writes RCM7 only).");
+            throw new InvalidDataException($"'{path}' is not an RCM6 cabmap -- rebuild it (Build writes RCM6 only).");
         }
 
         int baseLen = ReadInt(stream);
@@ -445,7 +344,6 @@ public sealed class CabTable
         int phantomCount = ReadInt(stream);
         int fileCount = ReadInt(stream);
         int pathCount = ReadInt(stream);
-        int factCount = ReadInt(stream);
         int classTotal = ReadInt(stream);
         int depTotal = ReadInt(stream);
 
@@ -477,16 +375,12 @@ public sealed class CabTable
         int[] pathStarts = ReadInts(stream, count + 1);
         int[] pathOffsets = ReadInts(stream, pathCount + 1);
         byte[] pathBlob = ReadBlob(stream);
-        int[] factStarts = ReadInts(stream, count + 1);
-        int[] factOffsets = ReadInts(stream, factCount + 1);
-        byte[] factBlob = ReadBlob(stream);
         int[] classStarts = ReadInts(stream, count + 1);
         int[] classFlat = ReadInts(stream, classTotal);
         int[] depStarts = ReadInts(stream, count + 1);
         int[] depFlat = ReadInts(stream, depTotal);
 
         (int[] reverseStarts, int[] reverseFlat) = BuildReverse(count, phantomCount, depStarts, depFlat);
-        int total = count + phantomCount;
 
         return new CabTable
         {
@@ -497,19 +391,16 @@ public sealed class CabTable
             CabOffsets = cabOffsets,
             DistinctFileBlob = fileBlob,
             DistinctFileOffsets = fileOffsets,
-            FileIndex = WithoutFiles(fileIndex, total),
+            FileIndex = fileIndex,
             EntryFileNameBlob = nameBlob,
-            EntryFileNameOffsets = WithPhantoms(nameOffsets, total),
+            EntryFileNameOffsets = nameOffsets,
             ContainerPathBlob = pathBlob,
             ContainerPathOffsets = pathOffsets,
-            ContainerPathStarts = WithPhantoms(pathStarts, total),
-            FactBlob = factBlob,
-            FactOffsets = factOffsets,
-            FactStarts = WithPhantoms(factStarts, total),
+            ContainerPathStarts = pathStarts,
             ClassIdsFlat = classFlat,
-            ClassIdStarts = WithPhantoms(classStarts, total),
+            ClassIdStarts = classStarts,
             DependenciesFlat = depFlat,
-            DependencyStarts = WithPhantoms(depStarts, total),
+            DependencyStarts = depStarts,
             ReverseFlat = reverseFlat,
             ReverseStarts = reverseStarts,
         };
@@ -517,9 +408,6 @@ public sealed class CabTable
 
     private static void WriteInts(BinaryWriter writer, int[] values)
         => writer.Write(MemoryMarshal.AsBytes(values.AsSpan()));
-
-    private static void WriteInts(BinaryWriter writer, int[] values, int count)
-        => writer.Write(MemoryMarshal.AsBytes(values.AsSpan(0, count)));
 
     private static void WriteBlob(BinaryWriter writer, byte[] blob)
     {

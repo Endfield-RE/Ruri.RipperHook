@@ -18,10 +18,6 @@ public readonly struct CabClosure
 
     /// <summary>The entry file names of the rows the selection asked for, dependents reached through included.</summary>
     public required HashSet<string> SeedFileNames { get; init; }
-
-    /// <summary>Whether the map this closure was resolved from files any asset under a file, by its
-    /// full path (<see cref="CabTable.HoldsAssets"/>).</summary>
-    public required Func<string, bool> Mapped { get; init; }
 }
 
 public sealed class CabSelection
@@ -143,7 +139,7 @@ public sealed class CabSelection
             {
                 continue;
             }
-            string full = table.FullPath(fileId);
+            string full = Path.GetFullPath(Path.Combine(table.BaseFolder, table.DistinctFile(fileId)));
             if (File.Exists(full))
             {
                 files.Add(full);
@@ -157,7 +153,6 @@ public sealed class CabSelection
             SeedCount = seeds.Count,
             ClosureCount = closureCount,
             SeedFileNames = seedFiles,
-            Mapped = table.HoldsAssets,
         };
     }
 

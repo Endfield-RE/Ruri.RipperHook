@@ -1,0 +1,15 @@
+<Project>
+  <!-- Build the existing backend project against the installed dependency snapshot.
+       No upstream sources or installed DLLs are modified. -->
+  <ItemGroup>
+    <Reference Include="@(ProjectReference->'%(Filename)')">
+      <HintPath>$(RuriDeps)/%(Identity).dll</HintPath>
+      <Private>true</Private>
+      <ReferenceSourceTarget>ResolveAssemblyReference</ReferenceSourceTarget>
+    </Reference>
+    <ProjectReference Remove="@(ProjectReference)" />
+    <Reference Include="$(RuriDeps)/AssetRipper.*.dll" />
+    <Reference Include="$(RuriDeps)/SharpGLTF*.dll" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

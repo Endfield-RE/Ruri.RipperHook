@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using AssetRipper.Assets;
@@ -8,9 +8,10 @@ using AssetRipper.Import.Configuration;
 using AssetRipper.Import.Logging;
 using AssetRipper.IO.Files;
 using AssetRipper.Processing;
+using AssetRipper.Processing.AnimatorControllers;
 using AssetRipper.SourceGenerated;
 using Newtonsoft.Json;
-using Ruri.RipperHook.AR;
+using Ruri.RipperHook.BundleExport;
 using Ruri.RipperHook.CabMapping;
 using Ruri.RipperHook.HookUtils.GameBundleHook;
 
@@ -187,20 +188,11 @@ internal static class HeadlessRunner
             {
                 settings.ImportSettings.ScriptContentLevel = ScriptContentLevel.Level0;
             }
-            if (options.ScriptMode is { Length: > 0 } scriptMode)
-            {
-                // Named, not numbered: an unknown name is a typo and says so, rather than
-                // silently exporting in whatever mode happened to be default.
-                settings.ExportSettings.ScriptExportMode = Enum.TryParse(scriptMode, ignoreCase: true,
-                    out AssetRipper.Export.Configuration.ScriptExportMode parsed)
-                    ? parsed
-                    : throw new ArgumentException(
-                        $"--script-mode '{scriptMode}' is not one of "
-                        + string.Join(", ", Enum.GetNames<AssetRipper.Export.Configuration.ScriptExportMode>()));
-            }
             settings.LogConfigurationValues();
 
-            var handler = new ExportHandler(settings);
+            ExportHandler handler = options.SkipControllerProcessing
+                ? new RawControllerExportHandler(settings)
+                : new ExportHandler(settings);
 
             if (loadFilterFileNames is { Count: > 0 })
             {
@@ -216,6 +208,7 @@ internal static class HeadlessRunner
                 GameBundleHook.LoadIncludeFile = null;
             }
             handler.Process(gameData);
+            R2RiggingDiagnosticDump.TryWrite(gameData.GameBundle);
 
             (int totalAssets, Dictionary<int, int> byType) = SummarizeAssets(gameData);
 
@@ -447,4 +440,15 @@ internal static class HeadlessRunner
 
         JsonStdout.WriteLine(JsonConvert.SerializeObject(payload));
     }
+}
+
+/// <summary>
+/// Leaves ControllerConstant intact for source audits.  Some game controllers use
+/// BlendTree metadata which has no editor-equivalent child-position array; the
+/// normal processor creates virtual Unity assets from that incomplete data.
+/// </summary>
+internal sealed class RawControllerExportHandler(FullConfiguration settings) : ExportHandler(settings)
+{
+    protected override IEnumerable<IAssetProcessor> GetProcessors()
+        => base.GetProcessors().Where(static processor => processor is not AnimatorControllerProcessor);
 }

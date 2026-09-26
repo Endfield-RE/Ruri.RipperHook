@@ -1,5 +1,9 @@
 # Public kernel and optional private source adapter
 
+**Blender 5.2 branch:** use [../../BLENDER52.md](../../BLENDER52.md).
+`build-kernel.ps1` delegates to `build-legacy52.ps1`; this branch uses Legacy52
+source composition, not Statement. The remainder is retained main-branch history.
+
 ```
 KawakazeNotFound/RuriRipperImporter (public host)
   Ruri.RipperHook -> KawakazeNotFound/Ruri.RipperHook (public kernel)

@@ -1,7 +1,7 @@
 using System.Text;
 using Ruri.RipperHook.CabMapping;
-using Ruri.RipperHook.BlenderBridge.Data;
-using Ruri.RipperHook.BlenderBridge.Tables;
+using Ruri.RipperHook.Data;
+using Ruri.RipperHook.Tables;
 
 namespace Ruri.RipperHook.CLI;
 
@@ -235,7 +235,17 @@ internal static class CabQuery
                 .Where(entry => entry.Length > 0)
                 .ToArray();
 
-    private static string Cell(Column column, int row) => column.Kind == ColumnKind.Blob
-        ? column.Bytes(row).Length + " byte(s)"
-        : column.Text(row).Replace('\t', ' ');
+    private static string Cell(Column column, int row) => column switch
+    {
+        Utf8Column text => text.Text(row).Replace('\t', ' '),
+        IntegerColumn integers => integers.Values[row].ToString(),
+        RealColumn reals => Format(reals.Values[row]),
+        BlobColumn blob => blob.Bytes(row).Length + " byte(s)",
+        _ => string.Empty,
+    };
+
+    private static string Format(double value) =>
+        value == Math.Floor(value) && Math.Abs(value) < 1e15
+            ? ((long)value).ToString()
+            : value.ToString("R");
 }

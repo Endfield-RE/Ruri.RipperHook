@@ -1,4 +1,4 @@
-﻿using System.CommandLine;
+using System.CommandLine;
 using System.CommandLine.Binding;
 using System.IO;
 using System.Linq;
@@ -23,9 +23,6 @@ internal sealed class CliOptions
 
     public string? BuildCabMapPath { get; init; }
 
-    /// <summary>Which form scripts are exported in, named as AssetRipper names it; null keeps its default.</summary>
-    public string? ScriptMode { get; init; }
-
     public string? CabMapPath { get; init; }
 
     public string[] LoadTypes { get; init; } = [];
@@ -37,6 +34,8 @@ internal sealed class CliOptions
     public string? SceneWindow { get; init; }
 
     public bool NoScripts { get; init; }
+
+    public bool SkipControllerProcessing { get; init; }
 
     public string? DumpVfsPath { get; init; }
 
@@ -77,7 +76,6 @@ internal sealed class CliOptionsBinder : BinderBase<CliOptions>
     public Option<LogType> LogLevel { get; }
     public Option<bool> FailFast { get; }
     public Option<string?> BuildCabMap { get; }
-    public Option<string?> ScriptModeOption { get; }
     public Option<string?> CabMap { get; }
     public Option<string[]> LoadTypes { get; }
     public Option<string?> ExportScene { get; }
@@ -87,6 +85,8 @@ internal sealed class CliOptionsBinder : BinderBase<CliOptions>
     public Option<string?> SceneWindowOption { get; }
 
     public Option<bool> NoScriptsOption { get; }
+
+    public Option<bool> SkipControllerProcessingOption { get; }
 
     public Option<string?> DumpVfs { get; }
 
@@ -166,9 +166,6 @@ internal sealed class CliOptionsBinder : BinderBase<CliOptions>
         LogLevel = new Option<LogType>("--log-level", () => LogType.Info, "Log level threshold (Verbose|Debug|Info|Warning|Error).");
         FailFast = new Option<bool>("--fail-fast", () => true, "Abort on first per-asset export failure (default true).");
         BuildCabMap = new Option<string?>("--build-cab-map", "Build a CABMap (.bin) for --load[0] and exit. Format matches the GUI Asset Browser CABMap.");
-        ScriptModeOption = new Option<string?>("--script-mode",
-            "How scripts are exported: Decompiled, Hybrid, DllExportWithRenaming, DllExportWithoutRenaming. "
-            + "The last two write the build's assemblies as DLLs, which for an IL2CPP build is the dummy assembly set.");
         CabMap = new Option<string?>("--cab-map", "Load a CABMap (.bin) and expand each --load entry to its transitive CAB dependencies before handing files to AR.");
         LoadTypes = new Option<string[]>("--load-types", "With --cab-map, load only bundles containing these ClassID names (+ deps), e.g. Shader ComputeShader. Build the map first with --build-cab-map.")
         {
@@ -178,6 +175,7 @@ internal sealed class CliOptionsBinder : BinderBase<CliOptions>
         SceneLandmarkOption = new Option<string?>("--scene-landmark", "With --export-scene, export only one named place of the map, at the size the game gives it: <levelId>[,<scale>[,<sceneStateId>...]], e.g. map01_lv007 or map01_lv007,1.5,0. Omit for the whole map.");
         SceneWindowOption = new Option<string?>("--scene-window", "The same window as a world rect instead of a place name: <minX>,<minZ>,<maxX>,<maxZ>[,<sceneStateId>...].");
         NoScriptsOption = new Option<bool>("--no-scripts", "Do not load scripts at all (AssetRipper ScriptContentLevel.Level0). An IL2Cpp game recovers tens of thousands of MonoScripts nothing downstream reads.");
+        SkipControllerProcessingOption = new Option<bool>("--skip-controller-processing", "Keep AnimatorController assets raw; skip generation of virtual AnimatorState/BlendTree assets. Useful when auditing controllers with malformed blend metadata.");
         DumpVfs = new Option<string?>("--dump-vfs", "Dump raw VFS files (including non-bundle payloads AssetRipper never sees) into this directory and exit. --names filters by file name; needs --load <gameRoot> and a VFS-game --hook.");
         VfsTypesOption = new Option<string[]>("--vfs-types", "With --dump-vfs, keep only these VFS block types (e.g. Table JsonData Lua). These are VFS categories, not AssetRipper ClassIDs.")
         {
@@ -245,13 +243,13 @@ internal sealed class CliOptionsBinder : BinderBase<CliOptions>
             LogLevel,
             FailFast,
             BuildCabMap,
-            ScriptModeOption,
             CabMap,
             LoadTypes,
             ExportScene,
             SceneLandmarkOption,
             SceneWindowOption,
             NoScriptsOption,
+            SkipControllerProcessingOption,
             DumpVfs,
             VfsTypesOption,
             CabQueryOption,
@@ -286,13 +284,13 @@ internal sealed class CliOptionsBinder : BinderBase<CliOptions>
             LogLevel = pr.GetValueForOption(LogLevel),
             FailFast = pr.GetValueForOption(FailFast),
             BuildCabMapPath = pr.GetValueForOption(BuildCabMap),
-            ScriptMode = pr.GetValueForOption(ScriptModeOption),
             CabMapPath = pr.GetValueForOption(CabMap),
             LoadTypes = pr.GetValueForOption(LoadTypes) ?? [],
             ExportSceneMap = pr.GetValueForOption(ExportScene),
             SceneLandmark = pr.GetValueForOption(SceneLandmarkOption),
             SceneWindow = pr.GetValueForOption(SceneWindowOption),
             NoScripts = pr.GetValueForOption(NoScriptsOption),
+            SkipControllerProcessing = pr.GetValueForOption(SkipControllerProcessingOption),
             DumpVfsPath = pr.GetValueForOption(DumpVfs),
             VfsTypes = pr.GetValueForOption(VfsTypesOption) ?? [],
             CabQuery = pr.GetValueForOption(CabQueryOption),

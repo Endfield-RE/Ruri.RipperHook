@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+		<OutputPath>..\..\AssetRipper\Source\0Bins\AssetRipper\$(Configuration)\</OutputPath>
+		<IntermediateOutputPath>..\..\AssetRipper\Source\0Bins\obj\AssetRipper\$(Configuration)\</IntermediateOutputPath>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<AssemblyName>Ruri.RipperHook</AssemblyName>
 		<TargetFramework>net10.0-windows</TargetFramework>
@@ -19,14 +22,10 @@
 		<DefineConstants>$(DefineConstants);TRACE;RURI_PURE_RELEASE</DefineConstants>
 	</PropertyGroup>
 
-	<!-- The per-source container adapters, out of the private Ruri.GameHook submodule. That
-	     submodule is split by ENGINE because an engine's half belongs to whichever assembly can
-	     read it: the Unity half compiles into this kernel, which needs nothing beyond the
-	     framework to read it, while the Unreal half compiles into Ruri.FModelHook, the only
-	     project that may reference CUE4Parse. Included rather than removed, so a PureRelease
-	     build simply never names them. -->
-	<ItemGroup Condition="'$(PureRelease)' != 'true' and '$(UseEndfieldGameHook)' != 'true'">
-		<Compile Include="..\Ruri.GameHook\Unity\**\*.cs" Link="Ruri.GameHook\Unity\%(RecursiveDir)%(Filename)%(Extension)" />
+	<ItemGroup Condition="'$(PureRelease)' == 'true'">
+		<Compile Remove="AssetRipperGameHook\**\*.cs" />
+		<EmbeddedResource Remove="AssetRipperGameHook\**\*" />
+		<None Remove="AssetRipperGameHook\**\*" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -40,14 +39,6 @@
 		     package froze at format 1 are served from our own files instead: see TypeTreeFallbackHook
 		     and EngineAssetsTpkHook. -->
 		<PackageReference Include="AssetRipper.Tpk" Version="2.0.0" />
-		<!-- Pins the graph to the tensor library CUE4Parse compiles against (its own central
-		     version is 10.0.10 = assembly 10.0.0.10). AssetRipper's graph pulls 10.0.0, and .NET
-		     binds by NAME then refuses a LOWER version than the reference asks for: the Unreal
-		     reader's per-studio decryption is the one caller of it, so what the runtime threw was
-		     a FileLoadException inside the decrypt of every encrypted archive, swallowed as
-		     "this archive did not open" with correct keys in hand. The kernel's output is the
-		     folder both hosts load from, so the higher version is declared here. -->
-		<PackageReference Include="System.Numerics.Tensors" Version="10.0.10" />
 		<!-- IL2CPP native-method disassembly (AR_Il2CppMethodDump). Same versions AssetRipper.Import / .Export pull. -->
 		<PackageReference Include="AssetRipper.Cpp2IL.Core" Version="1.0.9" />
 		<PackageReference Include="AssetRipper.ICSharpCode.Decompiler" Version="11.0.0.9495" />
@@ -67,7 +58,6 @@
 		     current release reads those streams while we get its fixes and its security options
 		     (see KoikatuPack) instead of pinning ourselves to whatever the game shipped in 2018. -->
 		<PackageReference Include="MessagePack" Version="3.1.8" />
-		<PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
 	</ItemGroup>
 
 	<ItemDefinitionGroup Condition="'$(PureRelease)' == 'true'">
@@ -91,13 +81,9 @@
 	</ItemGroup>
 
 	<!-- The game type trees, interpreted at runtime by Ruri.RipperHook.Core.TypeTree. They live with
-	     the game hooks they describe, so PureRelease leaves them unnamed along with the rest of that
-	     tree (see the Ruri.GameHook include above). Rebuild with the Ruri.Tpk project. -->
-	<ItemGroup Condition="'$(PureRelease)' != 'true' and '$(UseEndfieldGameHook)' != 'true'">
-		<EmbeddedResource Include="..\Ruri.GameHook\Unity\TypeTree\RuriTypeTree.tpk">
-			<LogicalName>RuriTypeTree.tpk</LogicalName>
-		</EmbeddedResource>
-	</ItemGroup>
+	     the game hooks they describe, so PureRelease strips them along with the rest of that tree
+	     (see the AssetRipperGameHook removals above). Rebuild with the Ruri.Tpk project. -->
+
 
 	<!-- Unity's built-in engine resources, straight from the Tpk repo's own CI (the same artifact
 	     AssetRipper.AssemblyDumper.Downloader fetches). It replaces the copy frozen into the published
@@ -109,21 +95,11 @@
 		</EmbeddedResource>
 	</ItemGroup>
 
-	<!-- Which material property is which surface input, for Unity's own standard-shader
-	     vocabulary: the default layer under a title's own layer and the user's. -->
-	<ItemGroup>
-		<EmbeddedResource Include="AssetRipperHook\BlenderBridge\Statement\TextureRoles.json">
-			<LogicalName>TextureRoles.json</LogicalName>
-		</EmbeddedResource>
-	</ItemGroup>
 
-    <!-- Private source composition is explicit and mutually exclusive with PureRelease. -->
-    <Import Project="../Endfield-GameHook/Integration/Statement.targets"
-            Condition="'$(UseEndfieldGameHook)' == 'true' and '$(PureRelease)' != 'true' and Exists('../Endfield-GameHook/Integration/Statement.targets')" />
-    <Target Name="ValidatePrivateSourceSelection" BeforeTargets="PrepareForBuild">
-        <Error Condition="'$(UseEndfieldGameHook)' == 'true' and '$(PureRelease)' == 'true'"
-               Text="PureRelease excludes private sources. Select only one build profile." />
-        <Error Condition="'$(UseEndfieldGameHook)' == 'true' and !Exists('../Endfield-GameHook/Integration/Statement.targets')"
-               Text="Initialize Source/Endfield-GameHook before building the private profile." />
-    </Target>
+  <Import Project="../Endfield-GameHook/Integration/Legacy52.targets"
+          Condition="'$(UseEndfieldGameHook)' == 'true' and '$(PureRelease)' != 'true' and Exists('../Endfield-GameHook/Integration/Legacy52.targets')" />
+  <Target Name="ValidatePrivateSourceSelection" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(UseEndfieldGameHook)' == 'true' and '$(PureRelease)' == 'true'" Text="PureRelease excludes private sources. Select one profile." />
+    <Error Condition="'$(UseEndfieldGameHook)' == 'true' and !Exists('../Endfield-GameHook/Integration/Legacy52.targets')" Text="Initialize the pinned private legacy module." />
+  </Target>
 </Project>

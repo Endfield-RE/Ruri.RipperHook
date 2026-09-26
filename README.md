@@ -1,5 +1,8 @@
 # Ruri-RipperHook
 
+Blender 5.2 branch: see [BLENDER52.md](BLENDER52.md) for the legacy ABI,
+pinned private adapter, build profiles and branch-specific Actions artifacts.
+
 一个面向跨引擎资产管线的 AOP Hook 框架。在不修改上游源码的前提下,扩展 AssetRipper、FModel 等 Unity / UE 数据处理工具链的读取、转换与导出能力,把来源各异的资产——不同引擎版本、不同项目自定义的容器与序列化格式——收敛成统一的 Unity 数据表示(YAML / Unity 对象语义)。Shader 链路是这条转换通路当前最明确的先行落点。
 
 ## 下游:面向 Blender 的技术美术管线

@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using AssetRipper.Assets;
 using AssetRipper.Assets.Bundles;
 using AssetRipper.Assets.Collections;
@@ -87,14 +87,6 @@ public class GameBundleHook : CommonHook, IHookModule
     /// </summary>
     public static Func<string, bool>? LoadSeedFile;
 
-    /// <summary>
-    /// Whether the map driving the load files any asset under a file, by its full path. A file it
-    /// files nothing under holds no asset -- an archive index, a catalog -- so a reader looking for
-    /// one among thousands of archives asks this before opening any. Null when no map drives the
-    /// load, which is what building one is, and then nothing is known.
-    /// </summary>
-    public static Func<string, bool>? LoadMappedFile;
-
 
     public delegate IEnumerable<(string FileName, long FileNameHash, string BlockType, long Length, string ChkPath)> EnumerateVfsFilesDelegate(string[] vfsRoots, string[]? blockTypeFilter);
     public static EnumerateVfsFilesDelegate? EnumerateVfsFiles;
@@ -129,43 +121,33 @@ public class GameBundleHook : CommonHook, IHookModule
     public delegate List<(string Cab, string FileName, List<string> Paths)> ScanChunkNamesDelegate(string path);
     public static ScanChunkNamesDelegate? ScanChunkNames;
 
-    public delegate List<CabRow> ScanChunkFullDelegate(string path);
+    public delegate List<(string Cab, string FileName, List<string> Deps, List<int> ClassIds, List<string> Paths)> ScanChunkFullDelegate(string path);
     public static ScanChunkFullDelegate? ScanChunkFull;
 
-    /// <summary>
-    /// What a decoder can say about an archive's contents while the archive is open.
-    ///
-    /// A question like "which characters does this install carry" is answered by fields inside the
-    /// assets, and reading those again later means re-opening the archives that hold them -- for one
-    /// title, 1.2GB of them. The scan already has every archive open and parsed, so a decoder states
-    /// its facts here and the map keeps them. Unset, nothing is harvested and nothing is stored.
-    /// </summary>
-    public delegate List<string> HarvestFactsDelegate(SerializedFile file);
-    public static HarvestFactsDelegate? HarvestFacts;
-
-    public static CabRow ReadFullMetadata(SerializedFile sf, string fallbackName)
+    public static (string Cab, string FileName, List<string> Deps, List<int> ClassIds, List<string> Paths) ReadFullMetadata(SerializedFile sf, string fallbackName)
     {
         (string cab, List<string> deps, List<int> classIds) = ReadSerializedMetadata(sf, fallbackName);
         (_, _, List<string> paths) = ReadContainerNames(sf, fallbackName);
-        List<string> facts = HarvestFacts is { } harvest ? harvest(sf) : new List<string>();
-        return new CabRow(cab, fallbackName, deps, classIds, paths, facts);
+        return (cab, fallbackName, deps, classIds, paths);
     }
 
     public const string AssetRowSeparator = "::";
 
-    public static List<CabRow> ReadFullMetadataRows(SerializedFile sf, string fallbackName)
+    public static List<(string Cab, string FileName, List<string> Deps, List<int> ClassIds, List<string> Paths)> ReadFullMetadataRows(SerializedFile sf, string fallbackName)
     {
-        CabRow row = ReadFullMetadata(sf, fallbackName);
-        List<CabRow> rows = new() { row };
-        if (row.ContainerPaths.Count > 0)
+        (string cab, string fileName, List<string> deps, List<int> classIds, List<string> paths) =
+            ReadFullMetadata(sf, fallbackName);
+        List<(string, string, List<string>, List<int>, List<string>)> rows = new()
         {
-            return rows;
-        }
+            (cab, fileName, deps, classIds, paths),
+        };
+        if (paths.Count > 0)
+        {
+            return rows;        }
         foreach ((long pathId, int classId, string name) in HarvestAssetNames(sf))
         {
-            rows.Add(new CabRow($"{row.Cab}{AssetRowSeparator}{pathId}", row.FileName,
-                new List<string> { row.Cab }, new List<int> { classId }, new List<string> { name },
-                new List<string>()));
+            rows.Add(($"{cab}{AssetRowSeparator}{pathId}", fileName,
+                new List<string> { cab }, new List<int> { classId }, new List<string> { name }));
         }
         return rows;
     }
@@ -317,13 +299,11 @@ public class GameBundleHook : CommonHook, IHookModule
         ScanIncludeFile = null;
         LoadIncludeFile = null;
         LoadSeedFile = null;
-        LoadMappedFile = null;
         EnumerateVfsFiles = null;
         ExtractVfsFile = null;
         ScanChunk = null;
         ScanChunkNames = null;
         ScanChunkFull = null;
-        HarvestFacts = null;
         NameScanVersion = default;
         CustomFilePreInitialize = null;
     }

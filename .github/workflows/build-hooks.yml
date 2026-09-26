@@ -1,194 +1,56 @@
-name: Build Hooks
-
+name: Build Blender 5.2 Public Backend
 on:
-  workflow_dispatch:
-  pull_request:
-    branches: [main]
   push:
-    branches:
-      - main
-      - master
-
-concurrency:
-  group: build-hooks-${{ github.ref }}
-  cancel-in-progress: true
-
+    branches: [codex/blender-5.2]
+  pull_request:
+    branches: [codex/blender-5.2]
+  workflow_dispatch:
 permissions:
   contents: read
-
-env:
-  DOTNET_VERSION: 10.0.x
-  BUILD_CONFIGURATION: Release
-
+concurrency:
+  group: backend52-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  build-fmodelhook:
-    name: Build FModelHook
+  pure-release:
     runs-on: windows-2022
     timeout-minutes: 60
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 0
           submodules: false
           persist-credentials: false
-
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Update required submodules
+          dotnet-version: 10.0.x
+      - name: Initialize only public source dependencies
         shell: pwsh
-        # FModelHook references Ruri.RipperHook (its Ripper/ tree is the Unreal decoder the
-        # RipperHook hosts load as a module), so the AssetRipper graph is part of this build too.
-        # git aborts the whole update when any path here is missing from .gitmodules, leaving
-        # every submodule uninitialized. Unchecked, that surfaces as thousands of CS0234s in
-        # the build step instead of here, so every call is checked and the checkout asserted.
         run: |
-          $submodules = @("FModel", "AssetRipper", "Source/Ruri.ShaderDecompiler")
-          git submodule sync --recursive
-          if ($LASTEXITCODE -ne 0) { throw "git submodule sync failed ($LASTEXITCODE)" }
-          git submodule update --init --recursive --jobs 4 -- @submodules
-          if ($LASTEXITCODE -ne 0) { throw "git submodule update failed ($LASTEXITCODE)" }
-          git submodule status --recursive
-          foreach ($path in $submodules) {
-            $status = @(git submodule status -- $path)
-            if ($LASTEXITCODE -ne 0 -or $status.Count -eq 0) { throw "submodule '$path' is not declared in .gitmodules" }
-            foreach ($line in $status) {
-              if ($line -match '^-') { throw "submodule '$path' was not checked out: $line" }
-            }
-          }
-
-      - name: Assert nothing private is checked out
-        shell: pwsh
-        # What actually makes a published build pure is that the private tree is NOT HERE:
-        # the projects include it by glob, and a glob over an empty submodule matches nothing
-        # whatever -p:PureRelease says. So the invariant worth asserting is the checkout, not
-        # the flag -- and it is asserted before the build rather than looked for in the output
-        # afterwards, because a build that should never have compiled it must not run at all.
-        run: |
-          foreach ($private in @("Source/Ruri.GameHook", "Source/Endfield-GameHook")) {
-            if (Test-Path -LiteralPath $private) {
-              $files = @(Get-ChildItem -LiteralPath $private -Recurse -File -Force -ErrorAction Stop)
-              if ($files.Count -gt 0) {
-                throw "$private contains private files -- public CI requires an empty private tree."
+          git submodule update --init --recursive -- AssetRipper
+          if ($LASTEXITCODE -ne 0) { throw 'Public dependency checkout failed' }
+          foreach ($path in @('Source/Ruri.GameHook', 'Source/Endfield-GameHook', 'Source/Ruri.RipperHook/AssetRipperGameHook')) {
+            if (Test-Path -LiteralPath $path) {
+              if (@(Get-ChildItem -LiteralPath $path -Recurse -File -Force).Count) {
+                throw "Private content present: $path"
               }
             }
           }
-          Write-Host "private tree absent: nothing of it can be compiled or published"
-
-      - name: Show .NET info
+      - name: Build legacy public kernel and hosts from source
         shell: pwsh
-        run: dotnet --info
-
-      - name: Build FModelHook GUI
-        shell: pwsh
-        # NuGet sources come from the repo-root nuget.config (nuget.org + SamboyDev); no
-        # --configfile, so AssetRipper\nuget.config never shadows nuget.org.
-        # -p:PureRelease=true reaches the referenced Ruri.RipperHook: the game-hook submodule
-        # is not checked out here, and the pure kernel is what a module ships against.
-        run: dotnet build "Source\Ruri.FModelHook.GUI\Ruri.FModelHook.GUI.csproj" -c $env:BUILD_CONFIGURATION -p:PureRelease=true -m:1
-
-      - name: Build FModelHook CLI
-        shell: pwsh
-        # Sibling exe project (not referenced by the GUI project), shares the GUI's
-        # output folder -- must be built explicitly or its .exe never gets produced.
-        run: dotnet build "Source\Ruri.FModelHook.CLI\Ruri.FModelHook.CLI.csproj" -c $env:BUILD_CONFIGURATION -p:PureRelease=true -m:1
-
-      - name: Upload FModelHook artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: FModelHook-PureRelease
-          path: Source/0Bins/Release/**
-          if-no-files-found: error
-          retention-days: 30
-
-  build-pure-ripperhook:
-    name: Build Pure RipperHook
-    runs-on: windows-2022
-    timeout-minutes: 60
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          submodules: false
-          persist-credentials: false
-
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Update required submodules
-        shell: pwsh
-        # Only what Ruri.RipperHook.GUI / .CLI actually reference: FModel is not in their
-        # project graph, and Ruri.GameHook is stripped by PureRelease.
-        # git aborts the whole update when any path here is missing from .gitmodules, leaving
-        # every submodule uninitialized. Unchecked, that surfaces as thousands of CS0234s in
-        # the build step instead of here, so every call is checked and the checkout asserted.
         run: |
-          $submodules = @("AssetRipper", "Source/Ruri.ShaderDecompiler")
-          git submodule sync --recursive
-          if ($LASTEXITCODE -ne 0) { throw "git submodule sync failed ($LASTEXITCODE)" }
-          git submodule update --init --recursive --jobs 4 -- @submodules
-          if ($LASTEXITCODE -ne 0) { throw "git submodule update failed ($LASTEXITCODE)" }
-          git submodule status --recursive
-          foreach ($path in $submodules) {
-            $status = @(git submodule status -- $path)
-            if ($LASTEXITCODE -ne 0 -or $status.Count -eq 0) { throw "submodule '$path' is not declared in .gitmodules" }
-            foreach ($line in $status) {
-              if ($line -match '^-') { throw "submodule '$path' was not checked out: $line" }
-            }
-          }
-
-      - name: Assert nothing private is checked out
+          dotnet build Source/Ruri.RipperHook.GUI/Ruri.RipperHook.GUI.csproj -c Release -p:PureRelease=true -m:1
+          if ($LASTEXITCODE -ne 0) { throw 'Public GUI build failed' }
+          dotnet build Source/Ruri.RipperHook.CLI/Ruri.RipperHook.CLI.csproj -c Release -p:PureRelease=true -m:1
+          if ($LASTEXITCODE -ne 0) { throw 'Public CLI build failed' }
+      - name: Inspect published assembly boundary
         shell: pwsh
-        # What actually makes a published build pure is that the private tree is NOT HERE:
-        # the projects include it by glob, and a glob over an empty submodule matches nothing
-        # whatever -p:PureRelease says. So the invariant worth asserting is the checkout, not
-        # the flag -- and it is asserted before the build rather than looked for in the output
-        # afterwards, because a build that should never have compiled it must not run at all.
         run: |
-          foreach ($private in @("Source/Ruri.GameHook", "Source/Endfield-GameHook")) {
-            if (Test-Path -LiteralPath $private) {
-              $files = @(Get-ChildItem -LiteralPath $private -Recurse -File -Force -ErrorAction Stop)
-              if ($files.Count -gt 0) {
-                throw "$private contains private files -- public CI requires an empty private tree."
-              }
-            }
-          }
-          Write-Host "private tree absent: nothing of it can be compiled or published"
-
-      - name: Show .NET info
-        shell: pwsh
-        run: dotnet --info
-
-      - name: Build Pure RipperHook
-        working-directory: Source/Ruri.RipperHook.GUI
-        shell: cmd
-        # NuGet sources come from the repo-root nuget.config (nuget.org + SamboyDev).
-        # AssetRipper\nuget.config only declares SamboyDev and silently shadows nuget.org
-        # when passed via --configfile, causing NU1101 for public packages like
-        # K4os.Compression.LZ4 / SharpCompress / Microsoft.NET.ILLink.Tasks.
-        run: dotnet build -c Release -p:PureRelease=true
-
-      - name: Build RipperHook CLI
-        working-directory: Source/Ruri.RipperHook.CLI
-        shell: cmd
-        # Sibling exe project (not referenced by the GUI project), shares the GUI's
-        # output folder -- must be built explicitly or its .exe never gets produced.
-        # Same -p:PureRelease=true as the GUI build so both share the Ruri.GameHook
-        # strip + Release project-reference config (see Ruri.RipperHook.csproj).
-        run: dotnet build -c Release -p:PureRelease=true
-
-      - name: Upload Pure RipperHook artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          $kernels = @(Get-ChildItem AssetRipper/Source/0Bins/AssetRipper/Release -Filter Ruri.RipperHook.dll -File)
+          if ($kernels.Count -ne 1) { throw 'Expected one legacy kernel' }
+          dotnet run --project Source/Build/Legacy52Audit.csproj -- $kernels[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Public assembly audit failed' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: RipperHook-PureRelease
-          path: Source/0Bins/Release/**
+          name: RipperHook-Blender52-PureRelease
+          path: AssetRipper/Source/0Bins/AssetRipper/Release/**
           if-no-files-found: error
           retention-days: 30

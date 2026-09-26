@@ -2,6 +2,9 @@
 
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+		<OutputPath>..\..\AssetRipper\Source\0Bins\AssetRipper\$(Configuration)\</OutputPath>
+		<IntermediateOutputPath>..\..\AssetRipper\Source\0Bins\obj\AssetRipper.GUI\$(Configuration)\</IntermediateOutputPath>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<AssemblyName>Ruri.RipperHook.GUI</AssemblyName>
 		<RootNamespace>Ruri.RipperHook.GUI</RootNamespace>

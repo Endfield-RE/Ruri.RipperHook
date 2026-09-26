@@ -28,12 +28,7 @@ public sealed class DecoderHook
     /// <summary>The Unity version those builds report.</summary>
     public string EngineVersion { get; }
 
-    /// <summary>
-    /// What a host names this decoder. A version is only there to order several decoders of the
-    /// SAME product, so a product shipping exactly one states none and is named by itself alone:
-    /// a made-up version reads as a version the build actually has, which it is not.
-    /// </summary>
-    public string Id => string.IsNullOrEmpty(Version) ? Product : Product + "_" + Version;
+    public string Id => Product + "_" + Version;
 
     public override string ToString() => Id;
 }

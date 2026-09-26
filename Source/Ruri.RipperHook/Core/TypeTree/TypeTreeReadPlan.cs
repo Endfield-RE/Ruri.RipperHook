@@ -93,6 +93,11 @@ public sealed class TypeTreeReadPlan
 
         if (field is null)
         {
+            if (classID == ClassIDType.AnimationClip || path.Contains("m_MuscleClip", StringComparison.Ordinal))
+            {
+                System.Console.Error.WriteLine(
+                    $"[TypeTreeDiag] unmapped node '{path}' ({node.TypeName}) -- discarded; owner type has no such field.");
+            }
             return capture
                 ? new TypeTreeCaptureFieldStep(node, path)
                 : new TypeTreeFilledFieldStep(node, path, null, new TypeTreeDiscardStep(node));

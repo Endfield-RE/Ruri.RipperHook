@@ -24,14 +24,11 @@ using Ruri.RipperHook;
 using Ruri.ShaderTools;
 using Ruri.ShaderTools.Unity.ShaderLab;
 using Ruri.ShaderTools.Pipeline.Frontend;
-using MeshChannel = AssetRipper.SourceGenerated.Extensions.Enums.Shader.ShaderChannel.ShaderChannel;
 
 namespace Ruri.RipperHook.AR;
 
 public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 {
-    private const string VertexStage = "Vertex";
-
     public interface IShaderExportObserver
     {
         void OnPassSymbolsRead(SerializedProgramData symbols, ShaderSubProgram subProgram, ShaderReadContext context) { }
@@ -172,7 +169,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             {
                 var pass = subShader.Passes[passIndex];
                 Dictionary<int, string> nameTable = BuildNameTable(pass.NameIndices);
-                ReadProgram(shader, blob, pass, pass.ProgVertex, platform, subShaderIndex, passIndex, VertexStage, nameTable, result);
+                ReadProgram(shader, blob, pass, pass.ProgVertex, platform, subShaderIndex, passIndex, "Vertex", nameTable, result);
                 ReadProgram(shader, blob, pass, pass.ProgFragment, platform, subShaderIndex, passIndex, "Fragment", nameTable, result);
                 ReadProgram(shader, blob, pass, pass.ProgGeometry, platform, subShaderIndex, passIndex, "Geometry", nameTable, result);
                 ReadProgram(shader, blob, pass, pass.ProgHull, platform, subShaderIndex, passIndex, "Hull", nameTable, result);
@@ -338,8 +335,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
         foreach (ISerializedSubProgram subProgram in program.SubPrograms)
         {
-            List<ushort> keywords = KeywordIndicesOf(subProgram);
-            var emissionKey = CreateEmissionKey(subProgram.BlobIndex, null, keywords);
+            var emissionKey = CreateEmissionKey(subProgram.BlobIndex, null, subProgram.KeywordIndices);
             if (emitted.Contains(emissionKey))
             {
                 continue;
@@ -353,7 +349,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             yield return new ShaderReadSource(
                 subProgram.BlobIndex,
                 null,
-                keywords,
+                subProgram.KeywordIndices?.ToList() ?? [],
                 subProgram.Has_Parameters() ? subProgram.Parameters : null);
         }
     }
@@ -462,7 +458,6 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             {
                 Sampler = sampler.Sampler,
                 BindPoint = sampler.BindPoint,
-                InlineState = InlineSamplerState.FromUnityFlags(sampler.Sampler),
             });
         }
 
@@ -558,38 +553,6 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         return result;
     }
 
-    /// <summary>
-    /// The semantic of each vertex input location, from the program's own bind channels: they
-    /// list the inputs the shader declares in the order its locations were numbered, each naming
-    /// the mesh channel that feeds it. Only a vertex module has inputs to name.
-    /// </summary>
-    private static IReadOnlyList<VertexInputBinding>? VertexInputsOf(ShaderReadPass read)
-    {
-        if (read.Stage != VertexStage)
-        {
-            return null;
-        }
-        ShaderBindChannel[] channels = read.SubProgram.BindChannels.Channels;
-        VertexInputBinding[] inputs = new VertexInputBinding[channels.Length];
-        for (int location = 0; location < channels.Length; location++)
-        {
-            inputs[location] = new VertexInputBinding((uint)location, SemanticOf((MeshChannel)channels[location].Source));
-        }
-        return inputs;
-    }
-
-    private static string SemanticOf(MeshChannel channel) => channel switch
-    {
-        MeshChannel.Vertex => "POSITION0",
-        MeshChannel.Normal => "NORMAL0",
-        MeshChannel.Tangent => "TANGENT0",
-        MeshChannel.Color => "COLOR0",
-        >= MeshChannel.UV0 and <= MeshChannel.UV7 => $"TEXCOORD{channel - MeshChannel.UV0}",
-        MeshChannel.SkinWeight => "BLENDWEIGHT0",
-        MeshChannel.SkinBoneIndex => "BLENDINDICES0",
-        _ => throw new InvalidDataException($"a bind channel names source {(int)channel}, which is no mesh channel"),
-    };
-
     private static void DecompileAndWritePasses(IShader shader, List<ShaderSymbolPass> symbols, UnityShaderMetadata unityMetadata, string outputPath)
     {
         string failuresRoot = outputPath + ".failures";
@@ -618,7 +581,6 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
                 Symbols = pass.Symbols,
                 UnityMetadata = unityMetadata,
                 ShaderModel = 51,
-                VertexInputs = VertexInputsOf(pass.Read),
                 DebugDumpDirectory = Path.Combine(failuresRoot, passStem),
                 DebugDumpStem = "with-symbols",
             });
@@ -689,35 +651,6 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         {
             yield return new UnityShaderMetadataBuilder.ProgramBlobReference(source.BlobIndex, source.ParameterBlobIndex, source.KeywordIndices);
         }
-    }
-
-    /// <summary>
-    /// Every keyword index a subprogram states, from WHICHEVER list its build wrote them in.
-    ///
-    /// The lists are ALTERNATIVES, not parts of one list: a build states its keywords either as
-    /// one list or -- after Unity split global from local keywords -- as that pair, and the two
-    /// spellings number into their own name tables. Reading only the single one gave every
-    /// variant of a split build an empty keyword set, so they all looked like one variant and
-    /// whatever grouped them kept one. Reading BOTH and concatenating is the opposite mistake:
-    /// it mixes two numberings, and an index from the wrong one names no keyword at all.
-    /// </summary>
-    private static List<ushort> KeywordIndicesOf(ISerializedSubProgram subProgram)
-    {
-        if (subProgram.Has_KeywordIndices() && subProgram.KeywordIndices is { Count: > 0 } single)
-        {
-            return single.ToList();
-        }
-
-        List<ushort> indices = new();
-        if (subProgram.Has_GlobalKeywordIndices() && subProgram.GlobalKeywordIndices is { } globals)
-        {
-            indices.AddRange(globals);
-        }
-        if (subProgram.Has_LocalKeywordIndices() && subProgram.LocalKeywordIndices is { } locals)
-        {
-            indices.AddRange(locals);
-        }
-        return indices;
     }
 
     private static (uint BlobIndex, uint? ParameterBlobIndex, string KeywordIdentity) CreateEmissionKey(uint blobIndex, uint? parameterBlobIndex, IReadOnlyList<ushort>? keywordIndices)
@@ -933,11 +866,6 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         foreach (TextureParameter texture in source.TextureParameters)
         {
             target.TextureParameters.Add(texture);
-        }
-
-        foreach (SamplerParameter sampler in source.SamplerParameters)
-        {
-            target.SamplerParameters.Add(sampler);
         }
 
         foreach (VectorParameter vector in source.VectorParameters)
