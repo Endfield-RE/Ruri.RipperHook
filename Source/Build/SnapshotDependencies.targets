@@ -1,0 +1,18 @@
+<Project>
+  <!-- Compatible external assemblies are inputs, never public Git blobs. -->
+  <ItemGroup>
+    <Reference Include="@(ProjectReference->'%(Filename)')">
+      <HintPath>$(RuriDeps)/%(Identity).dll</HintPath>
+      <Private>true</Private>
+      <ReferenceSourceTarget>ResolveAssemblyReference</ReferenceSourceTarget>
+    </Reference>
+    <ProjectReference Remove="@(ProjectReference)" />
+    <Reference Include="$(RuriDeps)/AssetRipper.*.dll" />
+    <Reference Include="$(RuriDeps)/SharpGLTF*.dll" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Reference Remove="Ruri.Hook;Ruri.ACL;Ruri.ShaderDecompiler" />
+    <Reference Include="Ruri.Hook"><HintPath>$(StatementDeps)/Ruri.Hook.dll</HintPath></Reference>
+    <Reference Include="Ruri.ACL"><HintPath>$(StatementDeps)/Ruri.ACL.dll</HintPath></Reference>
+    <Reference Include="Ruri.ShaderDecompiler"><HintPath>$(StatementDeps)/Ruri.ShaderDecompiler.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>
