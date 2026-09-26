@@ -2,6 +2,8 @@ name: Build Hooks
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches:
       - main
@@ -13,8 +15,6 @@ concurrency:
 
 permissions:
   contents: read
-  # The prune job deletes this repo's older workflow runs; nothing else writes.
-  actions: write
 
 env:
   DOTNET_VERSION: 10.0.x
@@ -24,16 +24,18 @@ jobs:
   build-fmodelhook:
     name: Build FModelHook
     runs-on: windows-2022
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           submodules: false
+          persist-credentials: false
 
       - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -96,25 +98,28 @@ jobs:
         run: dotnet build "Source\Ruri.FModelHook.CLI\Ruri.FModelHook.CLI.csproj" -c $env:BUILD_CONFIGURATION -p:PureRelease=true -m:1
 
       - name: Upload FModelHook artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: FModelHook-PureRelease
           path: Source/0Bins/Release/**
           if-no-files-found: error
+          retention-days: 30
 
   build-pure-ripperhook:
     name: Build Pure RipperHook
     runs-on: windows-2022
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           submodules: false
+          persist-credentials: false
 
       - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -181,31 +186,9 @@ jobs:
         run: dotnet build -c Release -p:PureRelease=true
 
       - name: Upload Pure RipperHook artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: RipperHook-PureRelease
           path: Source/0Bins/Release/**
           if-no-files-found: error
-
-  prune-runs:
-    name: Prune older runs
-    needs: [build-fmodelhook, build-pure-ripperhook]
-    if: always()
-    runs-on: ubuntu-latest
-
-    steps:
-      # Only the run that is happening now survives. A run carries the commit
-      # message it was triggered by, so an old run keeps publishing text the
-      # repository itself no longer contains; keeping one is enough to see
-      # whether the build is green. Ids are collected before anything is
-      # deleted -- deleting while paging shifts the pages under the listing.
-      - name: Delete every run but this one
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          gh api "repos/$GH_REPO/actions/runs?per_page=100" --paginate --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id" > ids.txt
-          echo "runs to delete: $(wc -l < ids.txt)"
-          while read -r id; do
-            gh api -X DELETE "repos/$GH_REPO/actions/runs/$id" >/dev/null 2>&1 || echo "skipped $id (still running or already gone)"
-          done < ids.txt
+          retention-days: 30
