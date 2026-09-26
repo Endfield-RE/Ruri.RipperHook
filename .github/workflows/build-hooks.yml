@@ -67,11 +67,12 @@ jobs:
         # the flag -- and it is asserted before the build rather than looked for in the output
         # afterwards, because a build that should never have compiled it must not run at all.
         run: |
-          $private = "Source/Ruri.GameHook"
-          if (Test-Path $private) {
-            $files = @(Get-ChildItem -Path $private -Recurse -File -Filter *.cs -ErrorAction SilentlyContinue)
-            if ($files.Count -gt 0) {
-              throw "$private is checked out with $($files.Count) source file(s) -- a published build must not see the private tree."
+          foreach ($private in @("Source/Ruri.GameHook", "Source/Endfield-GameHook")) {
+            if (Test-Path -LiteralPath $private) {
+              $files = @(Get-ChildItem -LiteralPath $private -Recurse -File -Force -ErrorAction Stop)
+              if ($files.Count -gt 0) {
+                throw "$private contains private files -- public CI requires an empty private tree."
+              }
             }
           }
           Write-Host "private tree absent: nothing of it can be compiled or published"
@@ -147,11 +148,12 @@ jobs:
         # the flag -- and it is asserted before the build rather than looked for in the output
         # afterwards, because a build that should never have compiled it must not run at all.
         run: |
-          $private = "Source/Ruri.GameHook"
-          if (Test-Path $private) {
-            $files = @(Get-ChildItem -Path $private -Recurse -File -Filter *.cs -ErrorAction SilentlyContinue)
-            if ($files.Count -gt 0) {
-              throw "$private is checked out with $($files.Count) source file(s) -- a published build must not see the private tree."
+          foreach ($private in @("Source/Ruri.GameHook", "Source/Endfield-GameHook")) {
+            if (Test-Path -LiteralPath $private) {
+              $files = @(Get-ChildItem -LiteralPath $private -Recurse -File -Force -ErrorAction Stop)
+              if ($files.Count -gt 0) {
+                throw "$private contains private files -- public CI requires an empty private tree."
+              }
             }
           }
           Write-Host "private tree absent: nothing of it can be compiled or published"
