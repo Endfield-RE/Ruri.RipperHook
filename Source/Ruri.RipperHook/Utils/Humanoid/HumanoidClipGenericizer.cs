@@ -16,6 +16,9 @@ public sealed class SolvedHumanoidPose
 {
     public required float SampleRate { get; init; }
     public required int FrameCount { get; init; }
+    public int RootGoalAlignedFrames { get; init; }
+    public bool RootGoalAlignmentRejected { get; init; }
+    public List<(string Path, Vector3[] Positions)> RestPositions { get; init; } = new();
 
     public required List<(string Path, Quaternion[] Rotations)> BoneRotations { get; init; }
 
@@ -26,6 +29,9 @@ public sealed class SolvedHumanoidPose
 
 public static class HumanoidClipGenericizer
 {
+    // Source adapters select a profile; the default retains stock Avatar semantics.
+    public static Func<IReadOnlyDictionary<string, int>, bool>? UsePrimarySkeletonProfile { get; set; }
+
     private const float DefaultFloatWeight = 1f / 3f;
 
     public static bool HasMuscleCurves(IAnimationClip clip)
@@ -81,6 +87,22 @@ public static class HumanoidClipGenericizer
         }
 
         RootChannelPlan root = referential.BindClip(channelIndex);
+        bool primarySkeleton = UsePrimarySkeletonProfile?.Invoke(channelIndex) ?? false;
+        if (primarySkeleton)
+        {
+            foreach ((string name, int column) in channelIndex)
+            {
+                if (!name.StartsWith("RootT.", StringComparison.Ordinal)
+                    && !name.StartsWith("MotionT.", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                for (int f = 0; f < frameCount; f++)
+                {
+                    values[f * columnCount + column] *= referential.HumanScale;
+                }
+            }
+        }
 
         int slotCount = AvatarMuscleReferential.SlotCount;
         Quaternion[] quats = new Quaternion[slotCount];
@@ -92,15 +114,17 @@ public static class HumanoidClipGenericizer
             rotationBySlot[bone.Slot] = new Quaternion[frameCount];
         }
         Vector3[]? hipsPositions = referential.Hips is null ? null : new Vector3[frameCount];
+        Vector3[]? unalignedHipsPositions = primarySkeleton && hipsPositions is not null ? new Vector3[frameCount] : null;
         Vector3[] motionPositions = new Vector3[frameCount];
         Quaternion[] motionRotations = new Quaternion[frameCount];
         bool hasMotion = false;
         bool hasHips = false;
+        int rootGoalAlignedFrames = 0;
 
         for (int f = 0; f < frameCount; f++)
         {
             ReadOnlySpan<float> frame = values.AsSpan(f * columnCount, columnCount);
-            referential.BodyLocalQuats(frame, quats, driven);
+            referential.BodyLocalQuats(frame, quats, driven, primarySkeleton);
 
             foreach (MuscleBone bone in referential.DrivenBones)
             {
@@ -121,6 +145,13 @@ public static class HumanoidClipGenericizer
                 if (body is not null)
                 {
                     (Vector3 position, Quaternion rotation, (Vector3 motionT, Quaternion motionQ)) = body.Value;
+                    if (unalignedHipsPositions is not null) unalignedHipsPositions[f] = position;
+                    if (primarySkeleton && referential.TryAlignRootToHandGoals(frame, channelIndex,
+                        quats, driven, position, rotation, motionT, motionQ, out Vector3 aligned))
+                    {
+                        position = aligned;
+                        rootGoalAlignedFrames++;
+                    }
                     hipsPositions[f] = position;
                     rotationBySlot[hips.Slot][f] = rotation;
                     motionPositions[f] = motionT;
@@ -134,6 +165,13 @@ public static class HumanoidClipGenericizer
             }
         }
 
+        // Do not switch reconstruction methods mid-clip: that can introduce a seam.
+        bool rootGoalAlignmentRejected = rootGoalAlignedFrames > 0 && rootGoalAlignedFrames < frameCount;
+        if (rootGoalAlignmentRejected)
+        {
+            unalignedHipsPositions!.CopyTo(hipsPositions!, 0);
+            rootGoalAlignedFrames = 0;
+        }
         List<(string Path, Quaternion[] Rotations)> boneRotations = new();
         (string, Vector3[])? hipsOut = null;
         foreach (MuscleBone bone in referential.DrivenBones)
@@ -164,6 +202,10 @@ public static class HumanoidClipGenericizer
         {
             SampleRate = sampleRate,
             FrameCount = frameCount,
+            RootGoalAlignedFrames = rootGoalAlignedFrames,
+            RootGoalAlignmentRejected = rootGoalAlignmentRejected,
+            RestPositions = primarySkeleton ? referential.ModelRestPositionDefaults
+                .Select(p => (p.Path, Enumerable.Repeat(p.Position, frameCount).ToArray())).ToList() : new(),
             BoneRotations = boneRotations,
             HipsPositions = hipsOut,
             Motion = hasMotion ? (motionPositions, motionRotations) : null,
@@ -182,6 +224,8 @@ public static class HumanoidClipGenericizer
             return 0;
         }
 
+        HumanoidSolverTrace.WriteIfRequested(clip.Name.ToString(), pose);
+
         int written = 0;
         foreach ((string path, Quaternion[] rotations) in pose.BoneRotations)
         {
@@ -191,6 +235,12 @@ public static class HumanoidClipGenericizer
         if (pose.HipsPositions is { } hips)
         {
             WritePositionCurve(clip, hips.Path, hips.Positions, pose.FrameCount, pose.SampleRate);
+            written++;
+        }
+        foreach (var rest in pose.RestPositions)
+        {
+            if (clip.PositionCurves_C74.Any(c => c.Path == rest.Path)) continue;
+            WritePositionCurve(clip, rest.Path, rest.Positions, pose.FrameCount, pose.SampleRate);
             written++;
         }
         if (pose.Motion is { } motion)
@@ -304,7 +354,9 @@ public static class HumanoidClipGenericizer
         {
             string attribute = floatCurve.Attribute.String;
             if (!AvatarMuscleReferential.IsMuscleAttribute(attribute)
-                && !AvatarMuscleReferential.IsRootAttribute(attribute))
+                && !AvatarMuscleReferential.IsRootAttribute(attribute)
+                && !attribute.StartsWith("LeftHandT.", StringComparison.Ordinal)
+                && !attribute.StartsWith("RightHandT.", StringComparison.Ordinal))
             {
                 continue;
             }

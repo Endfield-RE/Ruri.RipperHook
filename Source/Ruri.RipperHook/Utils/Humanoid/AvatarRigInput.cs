@@ -30,6 +30,7 @@ public sealed class AvatarRigInput
     public required float[] HumanBoneMass { get; init; }
 
     public required Quaternion RootRestQ { get; init; }
+    public float HumanScale { get; init; } = 1f;
 
     public required float ArmTwist { get; init; }
     public required float ForeArmTwist { get; init; }
@@ -37,6 +38,7 @@ public sealed class AvatarRigInput
     public required float LegTwist { get; init; }
 
     public required (Vector3 T, Quaternion Q)[] SkeletonPose { get; init; }
+    public Dictionary<uint, Vector3> ModelRestTranslations { get; init; } = new();
 
     public readonly record struct AxesRow(
         Quaternion PreQ, Quaternion PostQ, Vector3 Sgn, Vector3 LimitMin, Vector3 LimitMax);
@@ -98,6 +100,13 @@ public sealed class AvatarRigInput
             pose[i] = (ToXformTranslation(xform), ToQuaternion(xform.Q));
         }
 
+        Dictionary<uint, Vector3> modelTranslations = new();
+        var modelSkeleton = avatar.Avatar.AvatarSkeleton?.Data;
+        var modelPose = avatar.Avatar.DefaultPose?.Data;
+        if (modelSkeleton is not null && modelPose is not null)
+            for (int i = 0; i < Math.Min(modelSkeleton.ID.Count, modelPose.X.Count); i++)
+                modelTranslations[modelSkeleton.ID[i]] = ToXformTranslation(modelPose.X[i]);
+
         return new AvatarRigInput
         {
             NodeParent = nodeParent,
@@ -110,11 +119,13 @@ public sealed class AvatarRigInput
             RightHandBoneIndex = ToIntArray(human.RightHand.Data.HandBoneIndex),
             HumanBoneMass = mass,
             RootRestQ = ToQuaternion(human.RootX.Q),
+            HumanScale = human.Scale,
             ArmTwist = human.ArmTwist,
             ForeArmTwist = human.ForeArmTwist,
             UpperLegTwist = human.UpperLegTwist,
             LegTwist = human.LegTwist,
             SkeletonPose = pose,
+            ModelRestTranslations = modelTranslations,
         };
     }
 
@@ -203,6 +214,12 @@ public sealed class AvatarRigInput
             : [];
 
         JsonNode? rootX = human?["m_RootX"];
+        var modelIds = IntArray(Unwrap(constant?["m_AvatarSkeleton"])?["m_ID"]);
+        var modelX = Unwrap(constant?["m_DefaultPose"])?["m_X"] as JsonArray;
+        Dictionary<uint, Vector3> modelTranslations = new();
+        if (modelX is not null)
+            for (int i = 0; i < Math.Min(modelIds.Length, modelX.Count); i++)
+                modelTranslations[unchecked((uint)modelIds[i])] = GetVector3(modelX[i]?["t"]);
 
         return new AvatarRigInput
         {
@@ -216,11 +233,13 @@ public sealed class AvatarRigInput
             RightHandBoneIndex = IntArray(Unwrap(human?["m_RightHand"])?["m_HandBoneIndex"]),
             HumanBoneMass = FloatArray(human?["m_HumanBoneMass"]),
             RootRestQ = rootX is null ? Quaternion.Identity : GetQuaternion(rootX["q"]),
+            HumanScale = GetFloat(human?["m_Scale"], 1f),
             ArmTwist = GetFloat(human?["m_ArmTwist"], 0.5f),
             ForeArmTwist = GetFloat(human?["m_ForeArmTwist"], 0.5f),
             UpperLegTwist = GetFloat(human?["m_UpperLegTwist"], 0.5f),
             LegTwist = GetFloat(human?["m_LegTwist"], 0.5f),
             SkeletonPose = pose,
+            ModelRestTranslations = modelTranslations,
         };
     }
 

@@ -12,6 +12,7 @@ namespace Ruri.RipperHook.BlenderBridge;
 
 public static class ClipCurveBlob
 {
+    public static Func<IAnimationClip, (string MetaJson, byte[] Curves)?>? DecodeOverride;
     private sealed record CurveIndexEntry(string kind, string path, string? attr, int classId, int keys, long off);
 
     private sealed record ClipIndex(
@@ -70,6 +71,7 @@ public static class ClipCurveBlob
         {
             Count("pos", 3, hips.Path);
         }
+        foreach (var rest in pose.RestPositions) Count("pos", 3, rest.Path);
         if (pose.Motion is not null)
         {
             Count("pos", 3, string.Empty);
@@ -120,6 +122,7 @@ public static class ClipCurveBlob
         {
             WritePositions(hipsOut.Positions);
         }
+        foreach (var rest in pose.RestPositions) WritePositions(rest.Positions);
         if (pose.Motion is { } motion)
         {
             WritePositions(motion.Positions);
@@ -192,6 +195,10 @@ public static class ClipCurveBlob
 
     public static (string MetaJson, byte[] Curves) Build(IAnimationClip clip)
     {
+        if (DecodeOverride?.Invoke(clip) is { } decoded)
+        {
+            return decoded;
+        }
         List<CurveIndexEntry> index = new();
         long totalFloats = 0;
 

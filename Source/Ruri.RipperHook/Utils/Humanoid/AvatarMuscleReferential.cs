@@ -53,6 +53,8 @@ public sealed class AvatarMuscleReferential
     private int[] _nodeParent = Array.Empty<int>();
     private Vector3[] _nodeRestT = Array.Empty<Vector3>();
     private Quaternion[] _nodeRestQ = Array.Empty<Quaternion>();
+    private Vector3[] _modelRestT = Array.Empty<Vector3>();
+    private bool _hasModelRest;
 
     private int[] _nodeToSlot = Array.Empty<int>();
 
@@ -70,6 +72,8 @@ public sealed class AvatarMuscleReferential
     public MuscleBone? Hips { get; private init; }
 
     public IReadOnlyList<MuscleBone> DrivenBones => _drivenBones;
+    public float HumanScale { get; private set; } = 1f;
+    public List<(string Path, Vector3 Position)> ModelRestPositionDefaults { get; } = new();
 
     private AvatarMuscleReferential(MuscleBone? hips) => Hips = hips;
 
@@ -126,6 +130,7 @@ public sealed class AvatarMuscleReferential
         }
 
         AvatarMuscleReferential referential = new(hips);
+        referential.HumanScale = input.HumanScale;
         bones.CopyTo(referential._bones, 0);
         referential._drivenBones.AddRange(driven);
 
@@ -139,6 +144,9 @@ public sealed class AvatarMuscleReferential
         referential._nodeParent = input.NodeParent;
         referential._nodeRestT = new Vector3[nodeCount];
         referential._nodeRestQ = new Quaternion[nodeCount];
+        referential._modelRestT = new Vector3[nodeCount];
+        referential._hasModelRest = input.NodeId.Length == nodeCount
+            && input.NodeId.All(input.ModelRestTranslations.ContainsKey);
         referential._nodeToSlot = new int[nodeCount];
         Array.Fill(referential._nodeToSlot, -1);
         for (int slot = 0; slot < BodySlots; slot++)
@@ -153,6 +161,8 @@ public sealed class AvatarMuscleReferential
         referential._fkDone = new bool[nodeCount];
         for (int i = 0; i < nodeCount; i++)
         {
+            if (referential._hasModelRest)
+                referential._modelRestT[i] = input.ModelRestTranslations[input.NodeId[i]];
             if (i < input.SkeletonPose.Length)
             {
                 referential._nodeRestT[i] = input.SkeletonPose[i].T;
@@ -164,7 +174,66 @@ public sealed class AvatarMuscleReferential
             }
         }
 
+        if (referential._hasModelRest)
+            for (int i = 0; i < nodeCount; i++)
+                if (i != hips?.NodeIndex && input.NodeParent[i] >= 0
+                    && Vector3.Distance(referential._nodeRestT[i], referential._modelRestT[i]) > 1e-6f
+                    && input.Tos.TryGetValue(input.NodeId[i], out string? path))
+                    referential.ModelRestPositionDefaults.Add((path, referential._modelRestT[i]));
         return referential;
+    }
+
+    // Goal positions are normalized body-space data, not additional model bones.
+    // Correct only a common translation; never force an arm toward inconsistent goals.
+    public bool TryAlignRootToHandGoals(ReadOnlySpan<float> frame,
+        IReadOnlyDictionary<string, int> columns, ReadOnlySpan<Quaternion> rotations,
+        ReadOnlySpan<bool> driven, Vector3 hipsPosition, Quaternion hipsRotation,
+        Vector3 motionPosition, Quaternion motionRotation, out Vector3 alignedPosition)
+    {
+        alignedPosition = hipsPosition;
+        if (!_hasModelRest || Hips is null) return false;
+        string[] required = { "RootT.x", "RootT.y", "RootT.z", "RootQ.x", "RootQ.y", "RootQ.z", "RootQ.w",
+            "LeftHandT.x", "LeftHandT.y", "LeftHandT.z", "RightHandT.x", "RightHandT.y", "RightHandT.z" };
+        if (required.Any(n => !columns.ContainsKey(n))) return false;
+        if (_bones[(int)BoneType.LeftHand] is not {} left || _bones[(int)BoneType.RightHand] is not {} right)
+            return false;
+        Vector3 rootT = new(frame[columns["RootT.x"]], frame[columns["RootT.y"]], frame[columns["RootT.z"]]);
+        Quaternion rootQ = new(frame[columns["RootQ.x"]], frame[columns["RootQ.y"]], frame[columns["RootQ.z"]], frame[columns["RootQ.w"]]);
+        if (!float.IsFinite(rootQ.LengthSquared()) || rootQ.LengthSquared() < 1e-10f) return false;
+        rootQ = Quaternion.Normalize(rootQ);
+        rotations.CopyTo(_frameQuats);
+        driven.CopyTo(_frameDriven);
+        Array.Clear(_fkDone);
+        (Vector3 P, Quaternion Q) Fk(int node)
+        {
+            if (node < 0) return (Vector3.Zero, Quaternion.Identity);
+            if (_fkDone[node]) return (_fkPos[node], _fkRot[node]);
+            int parent = _nodeParent[node];
+            var up = Fk(parent);
+            int slot = _nodeToSlot[node];
+            Vector3 t = node == Hips.NodeIndex ? hipsPosition : _modelRestT[node];
+            Quaternion q = node == Hips.NodeIndex ? hipsRotation
+                : slot >= 0 && _frameDriven[slot] ? _frameQuats[slot] : _nodeRestQ[node];
+            if (parent < 0) { t = motionPosition; q = motionRotation; }
+            _fkPos[node] = up.P + Vector3.Transform(t, up.Q);
+            _fkRot[node] = Quaternion.Normalize(up.Q * q);
+            _fkDone[node] = true;
+            return (_fkPos[node], _fkRot[node]);
+        }
+        Vector3[] residual = new Vector3[2];
+        int k = 0;
+        foreach (var hand in new[] { ("LeftHandT", left), ("RightHandT", right) })
+        {
+            Vector3 goal = new(frame[columns[hand.Item1 + ".x"]], frame[columns[hand.Item1 + ".y"]], frame[columns[hand.Item1 + ".z"]]);
+            // RootT was scaled by Solve; HandT remains normalized.
+            residual[k++] = rootT + Vector3.Transform(goal * HumanScale, rootQ) - Fk(hand.Item2.NodeIndex).P;
+        }
+        Vector3 delta = (residual[0] + residual[1]) * .5f;
+        if (!float.IsFinite(delta.LengthSquared()) || Vector3.Distance(residual[0], residual[1]) > .005f)
+            return false;
+        Quaternion parentQ = Fk(_nodeParent[Hips.NodeIndex]).Q;
+        alignedPosition += Vector3.Transform(delta, Quaternion.Inverse(parentQ));
+        return true;
     }
 
     private static void AddHandBones(MuscleBone?[] bones, List<MuscleBone> driven, AvatarRigInput input,
@@ -234,7 +303,8 @@ public sealed class AvatarMuscleReferential
         return bone.PreQ * swingTwist * Quaternion.Inverse(bone.PostQ);
     }
 
-    public void BodyLocalQuats(ReadOnlySpan<float> frame, Span<Quaternion> quats, Span<bool> driven)
+    public void BodyLocalQuats(ReadOnlySpan<float> frame, Span<Quaternion> quats, Span<bool> driven,
+        bool primarySkeleton = false)
     {
         driven.Clear();
         for (int slot = 0; slot < TotalSlots; slot++)
@@ -256,7 +326,20 @@ public sealed class AvatarMuscleReferential
             Quaternion parentOld = quats[(int)parent];
             Quaternion childOld = quats[(int)child];
             (float x, float y, float z) = ComputeAngles(parentBone, frame);
-            Quaternion parentNew = ComposeFromAngles(parentBone, (x * factorOf(this), y, z));
+            // The authored muscle value is not guaranteed to stay in [-1, 1].  Unity first
+            // canonicalises the twist represented by the parent quaternion, then distributes
+            // that principal angle.  Scaling the unwrapped input instead differs by 180 degrees
+            // as soon as a +/-90-degree forearm muscle crosses +/-2.
+            float canonicalTwist = MathF.Atan2(MathF.Sin(x), MathF.Cos(x));
+            // Primary-skeleton profiles retain proximal twist and transfer distal
+            // axial twist to the end bone. Separate helper tracks remain authored;
+            // Avatar skin twist fractions must not be applied a second time.
+            float factor = primarySkeleton
+                ? parent is BoneType.LeftUpperArm or BoneType.RightUpperArm
+                    or BoneType.LeftUpperLeg or BoneType.RightUpperLeg ? 1f : 0f
+                : factorOf(this);
+            Quaternion parentNew = ComposeFromAngles(parentBone,
+                (canonicalTwist * factor, y, z));
             Quaternion delta = Quaternion.Normalize(Quaternion.Inverse(parentOld) * parentNew);
             quats[(int)parent] = parentNew;
             quats[(int)child] = Quaternion.Normalize(Quaternion.Inverse(delta) * childOld);
@@ -508,6 +591,10 @@ public sealed class AvatarMuscleReferential
 
     private static Quaternion SwingTwist(float angleX, float angleY, float angleZ)
     {
+        // Unity's humanoid muscle rotation is stored in swing-twist tangent
+        // coordinates, rather than as three independent axis-angle turns.  The
+        // independent-axis composition is close around zero but drifts at the
+        // larger forearm/hand extremes.
         float tx = MathF.Tan(angleX * 0.5f);
         float ty = MathF.Tan(angleY * 0.5f);
         float tz = MathF.Tan(angleZ * 0.5f);
@@ -548,7 +635,10 @@ public sealed class AvatarMuscleReferential
             ["Left Lower Leg Twist In-Out"] = ((int)BoneType.LeftLowerLeg, 0),
             ["Left Foot Up-Down"] = ((int)BoneType.LeftFoot, 2),
             ["Left Foot Twist In-Out"] = ((int)BoneType.LeftFoot, 1),
-            ["Left Toes Up-Down"] = ((int)BoneType.LeftToes, 1),
+            ["Left Foot Twist Roll"] = ((int)BoneType.LeftFoot, 0),
+            ["Left Toes Up-Down"] = ((int)BoneType.LeftToes, 2),
+            ["Left Toes Left-Right"] = ((int)BoneType.LeftToes, 1),
+            ["Left Toes Twist Roll"] = ((int)BoneType.LeftToes, 0),
             ["Right Upper Leg Front-Back"] = ((int)BoneType.RightUpperLeg, 2),
             ["Right Upper Leg In-Out"] = ((int)BoneType.RightUpperLeg, 1),
             ["Right Upper Leg Twist In-Out"] = ((int)BoneType.RightUpperLeg, 0),
@@ -556,7 +646,10 @@ public sealed class AvatarMuscleReferential
             ["Right Lower Leg Twist In-Out"] = ((int)BoneType.RightLowerLeg, 0),
             ["Right Foot Up-Down"] = ((int)BoneType.RightFoot, 2),
             ["Right Foot Twist In-Out"] = ((int)BoneType.RightFoot, 1),
-            ["Right Toes Up-Down"] = ((int)BoneType.RightToes, 1),
+            ["Right Foot Twist Roll"] = ((int)BoneType.RightFoot, 0),
+            ["Right Toes Up-Down"] = ((int)BoneType.RightToes, 2),
+            ["Right Toes Left-Right"] = ((int)BoneType.RightToes, 1),
+            ["Right Toes Twist Roll"] = ((int)BoneType.RightToes, 0),
             ["Left Shoulder Down-Up"] = ((int)BoneType.LeftShoulder, 2),
             ["Left Shoulder Front-Back"] = ((int)BoneType.LeftShoulder, 1),
             ["Left Arm Down-Up"] = ((int)BoneType.LeftUpperArm, 2),

@@ -25,7 +25,7 @@
 	     framework to read it, while the Unreal half compiles into Ruri.FModelHook, the only
 	     project that may reference CUE4Parse. Included rather than removed, so a PureRelease
 	     build simply never names them. -->
-	<ItemGroup Condition="'$(PureRelease)' != 'true'">
+	<ItemGroup Condition="'$(PureRelease)' != 'true' and '$(UseEndfieldGameHook)' != 'true'">
 		<Compile Include="..\Ruri.GameHook\Unity\**\*.cs" Link="Ruri.GameHook\Unity\%(RecursiveDir)%(Filename)%(Extension)" />
 	</ItemGroup>
 
@@ -93,7 +93,7 @@
 	<!-- The game type trees, interpreted at runtime by Ruri.RipperHook.Core.TypeTree. They live with
 	     the game hooks they describe, so PureRelease leaves them unnamed along with the rest of that
 	     tree (see the Ruri.GameHook include above). Rebuild with the Ruri.Tpk project. -->
-	<ItemGroup Condition="'$(PureRelease)' != 'true'">
+	<ItemGroup Condition="'$(PureRelease)' != 'true' and '$(UseEndfieldGameHook)' != 'true'">
 		<EmbeddedResource Include="..\Ruri.GameHook\Unity\TypeTree\RuriTypeTree.tpk">
 			<LogicalName>RuriTypeTree.tpk</LogicalName>
 		</EmbeddedResource>
@@ -117,4 +117,13 @@
 		</EmbeddedResource>
 	</ItemGroup>
 
+    <!-- Private source composition is explicit and mutually exclusive with PureRelease. -->
+    <Import Project="../Endfield-GameHook/Integration/Statement.targets"
+            Condition="'$(UseEndfieldGameHook)' == 'true' and '$(PureRelease)' != 'true' and Exists('../Endfield-GameHook/Integration/Statement.targets')" />
+    <Target Name="ValidatePrivateSourceSelection" BeforeTargets="PrepareForBuild">
+        <Error Condition="'$(UseEndfieldGameHook)' == 'true' and '$(PureRelease)' == 'true'"
+               Text="PureRelease excludes private sources. Select only one build profile." />
+        <Error Condition="'$(UseEndfieldGameHook)' == 'true' and !Exists('../Endfield-GameHook/Integration/Statement.targets')"
+               Text="Initialize Source/Endfield-GameHook before building the private profile." />
+    </Target>
 </Project>

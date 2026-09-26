@@ -120,6 +120,11 @@ public static class ClipStatement
         (ClipIndex meta, List<Channel> channels) = Parse(clip.MetaJson, clip.Curves);
         HashSet<string> paths = new(skeletonPaths, StringComparer.Ordinal);
         Dictionary<uint, string> suffixes = UnitySkinning.SuffixTable(skeletonPaths);
+        if (avatarJson.Length > 0)
+        {
+            foreach (var alias in AvatarPathAliases.Resolve(AvatarStatement.FromJson(avatarJson).Tos.Values, skeletonPaths))
+                suffixes.TryAdd(UnitySkinning.EntryCrc(alias.Key), alias.Value);
+        }
         (int repaired, int unmatched) = Repair(channels, paths, suffixes);
         if (unmatched > 0)
         {
@@ -160,6 +165,10 @@ public static class ClipStatement
             .ToArray();
         (string solvedMeta, byte[] solvedCurves) = ClipCurveBlob.BuildSolved(pose, consumed, keepXZ, keepY, keepOrientation);
         (_, List<Channel> solved) = Parse(solvedMeta, solvedCurves);
+        // Rest defaults fill absent tracks; authored translation curves remain authoritative.
+        HashSet<string> defaults = new(pose.RestPositions.Select(rest => rest.Path), StringComparer.Ordinal);
+        solved.RemoveAll(channel => channel.Kind == "pos" && defaults.Contains(channel.Path)
+            && channels.Any(original => original.Kind == "pos" && original.Path == channel.Path));
         (_, int unmatched) = Repair(solved, paths, suffixes);
         if (unmatched > 0)
         {

@@ -254,8 +254,12 @@ namespace Ruri.ACL
             if (NumSamples == 0)
                 return false;
 
-            bool wrap = WrapOptimized;
             float clampedTime = Math.Clamp(sampleTime, 0.0f, FiniteDuration);
+            // Wrap-optimized ACL omits the duplicate terminal sample.  The
+            // terminal time still has to decode to that last stored sample;
+            // wrapping at exactly FiniteDuration jumps back to frame 0 and
+            // makes a one-shot attack snap to its opening arm pose.
+            bool wrap = WrapOptimized && clampedTime < FiniteDuration - 1e-6f;
             FindSamples(clampedTime, wrap, out uint clipKey0, out uint clipKey1, out float alpha);
 
             bool hasStripped = HasDatabase || HasStrippedKeyframes;
@@ -744,8 +748,8 @@ namespace Ruri.ACL
             if (NumSamples == 0)
                 return false;
 
-            bool wrap = WrapOptimized;
             float clampedTime = Math.Clamp(sampleTime, 0.0f, FiniteDuration);
+            bool wrap = WrapOptimized && clampedTime < FiniteDuration - 1e-6f;
             FindSamples(clampedTime, wrap, out uint key0, out uint key1, out float alpha);
 
             byte[] bitRateTable = Version == Version_02_00_00 ? ScalarBitRatesV0 : ScalarBitRatesV1;

@@ -10,3 +10,6 @@
 [submodule "Source/Ruri.GameHook"]
 	path = Source/Ruri.GameHook
 	url = https://github.com/FractalTools/Ruri.GameHook.git
+[submodule "Source/Endfield-GameHook"]
+	path = Source/Endfield-GameHook
+	url = https://github.com/KawakazeNotFound/Endfield-GameHook.git

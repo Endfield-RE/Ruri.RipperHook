@@ -29,6 +29,8 @@ public static class AvatarStatement
         public int[] RightHandBoneIndex { get; set; } = [];
         public float[] HumanBoneMass { get; set; } = [];
         public float[] RootRestQ { get; set; } = [];
+        public float HumanScale { get; set; } = 1f;
+        public Dictionary<uint, float[]> ModelRestTranslations { get; set; } = [];
         public float ArmTwist { get; set; }
         public float ForeArmTwist { get; set; }
         public float UpperLegTwist { get; set; }
@@ -57,6 +59,9 @@ public static class AvatarStatement
             RightHandBoneIndex = input.RightHandBoneIndex,
             HumanBoneMass = input.HumanBoneMass,
             RootRestQ = [input.RootRestQ.X, input.RootRestQ.Y, input.RootRestQ.Z, input.RootRestQ.W],
+            HumanScale = input.HumanScale,
+            ModelRestTranslations = input.ModelRestTranslations.ToDictionary(pair => pair.Key,
+                pair => new[] { pair.Value.X, pair.Value.Y, pair.Value.Z }),
             ArmTwist = input.ArmTwist,
             ForeArmTwist = input.ForeArmTwist,
             UpperLegTwist = input.UpperLegTwist,
@@ -85,6 +90,9 @@ public static class AvatarStatement
         return new AvatarRigInput
         {
             NodeParent = document.NodeParent,
+            HumanScale = document.HumanScale,
+            ModelRestTranslations = document.ModelRestTranslations.ToDictionary(pair => pair.Key,
+                pair => new Vector3(pair.Value[0], pair.Value[1], pair.Value[2])),
             NodeAxesId = document.NodeAxesId,
             NodeId = document.NodeId,
             Axes = document.Axes.Select(values => new AvatarRigInput.AxesRow(
