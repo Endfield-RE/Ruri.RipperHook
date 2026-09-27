@@ -108,7 +108,7 @@ internal static class R2RiggingDiagnosticDump
         var dependencies = new List<object?>();
         if (collection is SerializedAssetCollection serialized)
         {
-            IReadOnlyList<FileIdentifier> identifiers = serialized.SerializedFileDependencies;
+            IReadOnlyList<FileIdentifier> identifiers = GetSerializedFileDependencies(serialized);
             for (int i = 0; i < identifiers.Count; i++)
             {
                 FileIdentifier identifier = identifiers[i];
@@ -505,11 +505,20 @@ internal static class R2RiggingDiagnosticDump
         identifier = default;
         if (fileId <= 0 || collection is not SerializedAssetCollection serialized)
             return false;
-        IReadOnlyList<FileIdentifier> identifiers = serialized.SerializedFileDependencies;
+        IReadOnlyList<FileIdentifier> identifiers = GetSerializedFileDependencies(serialized);
         if (fileId > identifiers.Count)
             return false;
         identifier = identifiers[fileId - 1];
         return true;
+    }
+
+    // The preserved header snapshot is an optional dependency capability, not
+    // part of upstream AssetRipper's public ABI. Never invent missing file IDs.
+    private static IReadOnlyList<FileIdentifier> GetSerializedFileDependencies(SerializedAssetCollection collection)
+    {
+        PropertyInfo? property = typeof(SerializedAssetCollection).GetProperty("SerializedFileDependencies");
+        return property?.GetValue(collection) as IReadOnlyList<FileIdentifier>
+            ?? throw new NotSupportedException("R2 diagnostics require an AssetRipper dependency snapshot that preserves serialized-file identifiers. Normal import is unaffected.");
     }
 
     private static AssetCollection? TryResolveDependency(AssetCollection collection, int fileId, FileIdentifier identifier, out bool resolvedByIdentifier)
