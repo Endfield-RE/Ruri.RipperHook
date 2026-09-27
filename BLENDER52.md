@@ -24,7 +24,7 @@ The public kernel exposes generic callbacks and retains stock behavior by defaul
 - Snapshot builds use supplied dependency binaries; hosted PureRelease instead
   builds its public source dependencies.
 
-Use the private repository's `Endfield-Blender52-Runtime-Windows-x64` artifact
+Use the private repository's `RuriHookBin-Blender-5.2-Windows-x64` artifact
 for the accepted Endfield deployment. Source builds do not replace that locked
 runtime automatically. Public CI has no private credentials or runtime payloads.
 Blender 5.3/main and its Statement chain remain unchanged.
