@@ -40,7 +40,7 @@ public static class StatementTables
             "light_volume#", "fov#", "near#",
             "far#", "ortho#",
             "ortho_size#", "tag", "cast_shadows#", "main_light_shadows#", "light_fade@", "light_parameters@",
-            "object_parameter_names", "object_parameters@",
+            "object_parameter_names", "object_parameters@", "collection",
         ]);
         table.Role(ColumnRole.Label, "name").Role(ColumnRole.Key, "path");
         foreach (StatementNode node in statement.Nodes)
@@ -72,7 +72,7 @@ public static class StatementTables
                 Bytes<float>(light is null ? [] : [light.Fade.X, light.Fade.Y, light.Fade.Z, light.Fade.W]),
                 Bytes<float>(light?.Parameters ?? []),
                 string.Join(Separator, node.ObjectParameters.Select(parameter => parameter.Key)),
-                Bytes<float>(objectParameters));
+                Bytes<float>(objectParameters), node.Collection);
         }
         return table.Build();
     }

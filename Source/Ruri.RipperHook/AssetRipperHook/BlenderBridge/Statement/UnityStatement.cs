@@ -567,6 +567,7 @@ public sealed class UnityStatement
                 Shadows = draw.Shadows,
                 MainLightShadows = false,
                 ObjectParameters = draw.Parameters,
+                Collection = draw.Shader,
             });
             drawn++;
         }
