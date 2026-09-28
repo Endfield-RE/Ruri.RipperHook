@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using AssetRipper.Export.Modules.Textures;
 using AssetRipper.Primitives;
+using AssetRipper.SourceGenerated.Classes.ClassID_117;
 using AssetRipper.SourceGenerated.Classes.ClassID_187;
 using AssetRipper.SourceGenerated.Classes.ClassID_28;
 using AssetRipper.SourceGenerated.Enums;
@@ -12,7 +13,8 @@ using AssetRipper.TextureDecoder.Rgb.Formats;
 namespace Ruri.RipperHook.BlenderBridge.Data;
 
 /// <summary>
-/// Every image and mip level of a texture or a texture array, decoded to 32-bit float RGBA.
+/// Every image and mip level of a texture or a texture array, and a 3D texture's top level, decoded to 32-bit
+/// float RGBA.
 ///
 /// <para>AssetRipper's public conversion answers mip 0 of each image in a colour type picked per format,
 /// and it picks 8-bit RGBA for the block formats it does not list -- BC6H among them -- so an HDR
@@ -31,6 +33,10 @@ public static class TextureLevels
 {
     /// <summary>One decoded level: <see cref="Rgba"/> holds <c>Width * Height</c> texels.</summary>
     public readonly record struct Level(int Width, int Height, float[] Rgba);
+
+    /// <summary>A 3D texture's top level: <see cref="Rgba"/> holds <c>Width * Height * Depth</c> texels, x fastest, then
+    /// y, then z, each in storage order.</summary>
+    public readonly record struct VolumeLevel(int Width, int Height, int Depth, float[] Rgba);
 
     private delegate int LevelDecoder(object options, ReadOnlySpan<byte> input, Span<byte> output);
 
@@ -56,6 +62,35 @@ public static class TextureLevels
         Walk(texture.GetBestName(), default, (GraphicsFormat)texture.Format, texture.Width, texture.Height,
             Math.Max(1, texture.MipCount), texture.GetImageData(), texture.GetCompleteImageSize(),
             Math.Max(1, texture.Depth), slice, texture.Collection.Version);
+
+    /// <summary>The top level of a 3D texture. A 3D texture stores a level's slices one after another; the one
+    /// decoder answers one 2D image per call and returns the bytes it consumed, so the slices decode in turn.</summary>
+    public static VolumeLevel Decode(ITexture3D texture)
+    {
+        string name = texture.GetBestName();
+        byte[] data = texture.GetImageData();
+        int width = texture.Width;
+        int height = texture.Height;
+        int depth = Math.Max(1, texture.Depth);
+        (Type optionsType, LevelDecoder decode) = Decoder.Value;
+        float[] rgba = new float[width * height * depth * 4];
+        int sliceTexels = width * height * 4;
+        int offset = 0;
+        for (int slice = 0; slice < depth; slice++)
+        {
+            object options = Activator.CreateInstance(optionsType, default(TextureFormat), (GraphicsFormat)texture.Format,
+                width, height, 1, data.Length - offset, texture.Collection.Version)!;
+            int read = decode(options, data.AsSpan(offset),
+                System.Runtime.InteropServices.MemoryMarshal.AsBytes(rgba.AsSpan(slice * sliceTexels, sliceTexels)));
+            if (read <= 0 || offset + read > data.Length)
+            {
+                throw new InvalidDataException(
+                    $"{name}: slice {slice} of the top level ({(GraphicsFormat)texture.Format} {width}x{height}) did not decode");
+            }
+            offset += read;
+        }
+        return new VolumeLevel(width, height, depth, rgba);
+    }
 
     private static Level[] Walk(string name, TextureFormat format, GraphicsFormat graphicsFormat, int width0,
         int height0, int mips, byte[] data, int imageSize, int images, int image, UnityVersion version)
