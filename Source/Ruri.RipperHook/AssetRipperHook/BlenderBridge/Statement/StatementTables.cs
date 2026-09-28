@@ -39,6 +39,7 @@ public static class StatementTables
             "light_inner_angle#", "light_width#", "light_height#", "light_shadows#", "light_volume#", "fov#", "near#",
             "far#", "ortho#",
             "ortho_size#", "tag", "cast_shadows#", "main_light_shadows#", "light_fade@", "light_parameters@",
+            "object_parameter_names", "object_parameters@",
         ]);
         table.Role(ColumnRole.Label, "name").Role(ColumnRole.Key, "path");
         foreach (StatementNode node in statement.Nodes)
@@ -47,6 +48,15 @@ public static class StatementTables
                 basis.ConvertTrs(node.Position, node.Rotation, node.Scale);
             UnityLightInfo? light = node.Light;
             UnityCameraInfo? camera = node.Camera;
+            float[] objectParameters = new float[node.ObjectParameters.Count * 4];
+            for (int index = 0; index < node.ObjectParameters.Count; index++)
+            {
+                Vector4 value = node.ObjectParameters[index].Value;
+                objectParameters[index * 4] = value.X;
+                objectParameters[index * 4 + 1] = value.Y;
+                objectParameters[index * 4 + 2] = value.Z;
+                objectParameters[index * 4 + 3] = value.W;
+            }
             table.Row(node.Index, node.Parent, node.Name, node.Path, node.Kind, node.Active ? 1 : 0, node.Mesh,
                 node.Skeleton, string.Join(Separator, node.Materials), node.Anchor,
                 position.X, position.Y, position.Z, rotation.X, rotation.Y, rotation.Z, rotation.W,
@@ -58,7 +68,9 @@ public static class StatementTables
                 camera is null ? -1 : camera.Orthographic ? 1 : 0, camera?.OrthographicSize ?? 0f, camera?.Tag ?? string.Empty,
                 node.Shadows is { } shadows ? (int)shadows : -1, node.MainLightShadows ? 1 : 0,
                 Bytes<float>(light is null ? [] : [light.Fade.X, light.Fade.Y, light.Fade.Z, light.Fade.W]),
-                Bytes<float>(light?.Parameters ?? []));
+                Bytes<float>(light?.Parameters ?? []),
+                string.Join(Separator, node.ObjectParameters.Select(parameter => parameter.Key)),
+                Bytes<float>(objectParameters));
         }
         return table.Build();
     }

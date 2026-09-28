@@ -115,6 +115,11 @@ public sealed class StatementNode
     /// <summary>Whether a casting renderer's shadow falls in the directional light's cascades. A
     /// Unity renderer casts for every light; a streamed renderer can cast for local lights only.</summary>
     public bool MainLightShadows { get; set; } = true;
+
+    /// <summary>What the pipeline binds for this renderer's own draw beyond its materials: named
+    /// four-component values, each under the name the pipeline's shaders read it by, that the engine
+    /// sets per draw from the renderer itself rather than from any material. Empty where it binds none.</summary>
+    public IReadOnlyList<KeyValuePair<string, Vector4>> ObjectParameters { get; set; } = [];
 }
 
 public sealed class StatementMesh
