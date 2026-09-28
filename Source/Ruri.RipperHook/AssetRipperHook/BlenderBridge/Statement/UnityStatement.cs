@@ -422,6 +422,7 @@ public sealed class UnityStatement
                     AreaWidth = 0f,
                     AreaHeight = 0f,
                     Shadows = light.Shadows,
+                    ShadowResolution = light.ShadowResolution,
                     VolumeFactor = light.VolumeFactor,
                     Disabled = false,
                     Fade = light.Fade,
