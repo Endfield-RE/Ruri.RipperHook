@@ -107,6 +107,10 @@ public sealed class UnityLightInfo
 
     public required bool Shadows { get; init; }
 
+    /// <summary>The texels the engine's shadow map spends across the light's shadow frustum -- a spot's cone,
+    /// each face of a point light's cube -- or zero when the source states none and the host picks its own.</summary>
+    public int ShadowResolution { get; init; }
+
     public required float VolumeFactor { get; init; }
 
     public required bool Disabled { get; init; }

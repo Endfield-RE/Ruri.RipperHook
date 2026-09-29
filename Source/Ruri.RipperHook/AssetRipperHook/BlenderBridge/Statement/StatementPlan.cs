@@ -67,6 +67,15 @@ public sealed record WindowPlacement(string AssetPath, string Name, Vector3 Posi
     Vector3 Scale, IReadOnlyList<string> MaterialPaths, bool IsPrefab, string Stem, string MeshName,
     ShadowCastingMode? Shadows, bool MainLightShadows);
 
+/// <summary>One draw the pipeline makes of its own rather than through a renderer's material: a mesh the
+/// closure holds (under the path the game files it, <c>##</c> naming the mesh within), drawn with one of the
+/// pipeline's own shaders -- no material asset exists -- at the engine's own <paramref name="ObjectToWorld"/>
+/// (row-major, column vectors, the source's world), casting as <paramref name="Shadows"/> states, with the
+/// per-draw values the pipeline binds for it (<see cref="StatementNode.ObjectParameters"/>). A streamed
+/// level's water planes are drawn this way.</summary>
+public sealed record PipelineDraw(string MeshPath, string Name, double[] ObjectToWorld, string Shader,
+    ShadowCastingMode Shadows, IReadOnlyList<KeyValuePair<string, Vector4>> Parameters);
+
 /// <summary>What a material write sets through the engine's own material setters.</summary>
 public enum MaterialWriteKind
 {
@@ -92,13 +101,15 @@ public sealed record RendererFill(IMesh Mesh, IReadOnlyList<IMaterial?> Material
 /// <summary>One light a plan states: what it is, where it stands and how its transform turns it, and how
 /// bright, in the engine's own frame -- the colour linear as the engine emits it, the intensity the
 /// component's own, the range and cone angles (full angles, degrees) as it states them, and the multiplier
-/// on what it scatters into a participating medium (zero keeps it out). The rotation is the transform's own,
+/// on what it scatters into a participating medium (zero keeps it out), and the texels its shadow map spans
+/// (<see cref="UnityLightInfo.ShadowResolution"/>). The rotation is the transform's own,
 /// roll included: a cookie is projected along the light's axes, not only its forward. <see cref="Fade"/>
 /// and <see cref="Parameters"/> are what the engine's light list carries beyond that
 /// (<see cref="UnityLightInfo.Fade"/>, <see cref="UnityLightInfo.Parameters"/>).</summary>
 public sealed record PlanLight(string Name, int Type, System.Numerics.Vector3 Position,
     System.Numerics.Quaternion Rotation, float Red, float Green, float Blue, float Intensity, float Range,
-    float SpotAngle, float InnerSpotAngle, bool Shadows, float VolumeFactor, System.Numerics.Vector4 Fade,
+    float SpotAngle, float InnerSpotAngle, bool Shadows, int ShadowResolution, float VolumeFactor,
+    System.Numerics.Vector4 Fade,
     float[] Parameters);
 
 /// <summary>One thing a plan states short of its source: what, how many, and which.</summary>
@@ -138,6 +149,10 @@ public sealed class StatementPlan
     /// renderers only, and the level's light lives beside them in its environment volumes.</summary>
     public IReadOnlyList<PlanLight> Lights { get; init; } = [];
 
+    /// <summary>The draws the pipeline makes of its own in this selection (<see cref="PipelineDraw"/>); their
+    /// meshes are among <see cref="WindowPaths"/> so the closure holds them.</summary>
+    public IReadOnlyList<PipelineDraw> PipelineDraws { get; init; } = [];
+
     /// <summary>What the plan knows it states short of the source, reported with the statement rather
     /// than dropped: something the source carries that the plan could not reproduce exactly.</summary>
     public IReadOnlyList<PlanNote> Notes { get; init; } = [];
@@ -159,7 +174,7 @@ public sealed class StatementPlan
     public Func<GameData, IReadOnlyDictionary<IUnityObjectBase, string>>? Clips { get; init; }
 
     public string Signature => string.Join('|', Seed, Kind, string.Join(';', Cabs), SeededOnly ? 1 : 0,
-        string.Join(';', NamedRoots), Meshes.Count, Parts.Count, Placements.Count, Fills is null ? 0 : 1);
+        string.Join(';', NamedRoots), Meshes.Count, Parts.Count, Placements.Count, PipelineDraws.Count, Fills is null ? 0 : 1);
 }
 
 /// <summary>Where a seed that is not an archive of the loaded map is explained: a hook

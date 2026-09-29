@@ -422,6 +422,7 @@ public sealed class UnityStatement
                     AreaWidth = 0f,
                     AreaHeight = 0f,
                     Shadows = light.Shadows,
+                    ShadowResolution = light.ShadowResolution,
                     VolumeFactor = light.VolumeFactor,
                     Disabled = false,
                     Fade = light.Fade,
@@ -524,6 +525,55 @@ public sealed class UnityStatement
                     Shadows = piece.Shadows,
                 });
             }
+        }
+        int drawn = 0;
+        foreach (PipelineDraw draw in _plan.PipelineDraws)
+        {
+            int subMark = draw.MeshPath.IndexOf("##", StringComparison.Ordinal);
+            WindowPlacement carrier = new(draw.MeshPath, draw.Name, System.Numerics.Vector3.Zero,
+                System.Numerics.Quaternion.Identity, System.Numerics.Vector3.One, [], false, string.Empty,
+                subMark >= 0 ? draw.MeshPath[(subMark + 2)..] : string.Empty, draw.Shadows, false);
+            string key = draw.MeshPath + "\n";
+            if (!sources.TryGetValue(key, out WindowSource? source))
+            {
+                source = BuildWindowSource(carrier, Resolve, ref builtins);
+                sources[key] = source;
+            }
+            if (source.Problem == "missing" || source.Pieces is not null)
+            {
+                unresolved.Add(draw.MeshPath);
+                continue;
+            }
+            if (source.Problem == "empty")
+            {
+                empty.Add(draw.MeshPath);
+                continue;
+            }
+            (System.Numerics.Vector3 position, System.Numerics.Quaternion rotation, System.Numerics.Vector3 scale) =
+                Mat4.Decompose(draw.ObjectToWorld);
+            _statement.Nodes.Add(new StatementNode
+            {
+                Index = _statement.Nodes.Count,
+                Parent = levelNode,
+                Name = draw.Name,
+                Path = draw.Name,
+                Kind = "mesh",
+                Active = true,
+                Mesh = source.MeshKey,
+                Materials = [PipelineMaterial(draw.Shader)],
+                Position = position,
+                Rotation = rotation,
+                Scale = scale,
+                Shadows = draw.Shadows,
+                MainLightShadows = false,
+                ObjectParameters = draw.Parameters,
+                Collection = draw.Shader,
+            });
+            drawn++;
+        }
+        if (_plan.PipelineDraws.Count > 0)
+        {
+            _statement.Note(_plan.Seed, "pipeline draws placed", drawn, _plan.Label);
         }
         _statement.Note(_plan.Seed, "placements stated", _plan.Placements.Count, _plan.Label);
         if (proxies > 0)
@@ -1651,6 +1701,27 @@ public sealed class UnityStatement
     {
         string key = KeyOf(material);
         return _statement.HasMaterial(key) ? key : Register(key, UnityMaterials.Read(material, TextureKey));
+    }
+
+    /// <summary>The material a pipeline draw shades with. None exists in the closure: the draw is the pipeline's
+    /// shader alone, with no property, texture or keyword of its own -- what it varies by is the draw's own
+    /// per-object values -- so every draw of one shader shares this one record.</summary>
+    private string PipelineMaterial(string shader)
+    {
+        string key = "pipeline|" + shader;
+        return _statement.HasMaterial(key) ? key : Register(key, new UnityMaterialProperties
+        {
+            Name = shader,
+            ShaderName = shader,
+            Textures = [],
+            TextureAssets = [],
+            TextureScaleOffset = new Dictionary<string, float[]>(StringComparer.Ordinal),
+            FloatEntries = [],
+            ColorEntries = [],
+            KeywordList = [],
+            DisabledPasses = [],
+            ShaderPasses = [],
+        });
     }
 
     /// <summary>The material a renderer draws with once the title has written onto it. The engine
