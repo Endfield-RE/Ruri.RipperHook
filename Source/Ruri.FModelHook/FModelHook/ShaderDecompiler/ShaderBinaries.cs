@@ -130,7 +130,16 @@ internal static class ShaderBinaries
         };
     }
 
-    public static void Build(ShaderSourceState state)
+    /// <summary>
+    /// Every shader the archive's maps name, prepared in the order the maps name them and
+    /// handed on the moment it is ready, so the decompiler starts on the first while the rest
+    /// are still being read.
+    ///
+    /// A shader is prepared with the symbols of the first map that prepares it. One that a map
+    /// cannot prepare is tried again at the next map naming it, and only when the last map
+    /// naming it has failed too is it told to the schedule as settled without a result.
+    /// </summary>
+    public static IEnumerable<PreparedShader> Prepare(ShaderSourceState state, ShaderEmissionSchedule schedule)
     {
         s_seedHitsByClass.Clear();
         s_unknownShaderTypeHashes.Clear();
@@ -139,34 +148,43 @@ internal static class ShaderBinaries
         Directory.CreateDirectory(state.OutputDirectory);
 
         ShaderLibrary lib = state.Library;
+        HashSet<int> prepared = new();
+        List<int> missed = new();
         int wanted = 0;
-        foreach (ShaderMapInfo map in state.ShaderMaps)
+        for (int map = 0; map < state.ShaderMaps.Count; map++)
         {
-            MaterialSymbolSource? symbols = MaterialSymbols.Of(map);
-            if (symbols is null && map.UniformExpressions is not null)
+            ShaderMapInfo info = state.ShaderMaps[map];
+            MaterialSymbolSource? symbols = MaterialSymbols.Of(info);
+            if (symbols is null && info.UniformExpressions is not null)
             {
-                state.LogError($"Shader map {map.ShaderMapHash} ({map.PrimaryAsset}) states an expression set but no symbols came of it - material CB will be unnamed.");
+                state.LogError($"Shader map {info.ShaderMapHash} ({info.PrimaryAsset}) states an expression set but no symbols came of it - material CB will be unnamed.");
             }
-            foreach (ShaderMapMember member in map.Members)
+            missed.Clear();
+            foreach (ShaderMapMember member in info.Members)
             {
                 int i = member.ArchiveShaderIndex;
-                if (state.ShaderPrepByIndex.ContainsKey(i)) continue;
+                if (prepared.Contains(i)) continue;
                 wanted++;
-                byte[]? raw = lib.GetShaderCode(i);
-                if (raw == null) { state.Skipped++; continue; }
-                try
+                PreparedShader? shader = TryPrepare(state, lib, i, symbols);
+                if (shader is null)
                 {
-                    state.ShaderPrepByIndex[i] = PrepareSingleShader(state, i, raw, symbols);
+                    missed.Add(i);
+                    continue;
                 }
-                catch (Exception ex)
+                prepared.Add(i);
+                state.ShaderPrepByIndex[i] = shader.Value.Prep;
+                yield return shader.Value;
+            }
+            foreach (int i in missed)
+            {
+                if (!prepared.Contains(i))
                 {
-                    state.Failed++;
-                    state.LogError($"Shader {i}: prep exception: {ex.Message}");
+                    schedule.NotPrepared(i, map);
                 }
             }
         }
 
-        state.Log($"    PrepareShaderBinaries: prepped {state.ShaderPrepByIndex.Count}/{wanted} binaries.");
+        state.Log($"    PrepareShaderBinaries: prepped {prepared.Count}/{wanted} binaries.");
 
         if (state.ShaderTypeSeedRegistry.HashToNameCount > 0)
         {
@@ -189,7 +207,28 @@ internal static class ShaderBinaries
         }
     }
 
-    private static ShaderPrep PrepareSingleShader(ShaderSourceState state, int shaderIndex, byte[] raw, MaterialSymbolSource? symbols)
+    /// <summary>One shader prepared, or null when its code could not be read or its preparation threw.</summary>
+    private static PreparedShader? TryPrepare(ShaderSourceState state, ShaderLibrary lib, int shaderIndex, MaterialSymbolSource? symbols)
+    {
+        byte[]? raw = lib.GetShaderCode(shaderIndex);
+        if (raw == null)
+        {
+            Interlocked.Increment(ref state.Skipped);
+            return null;
+        }
+        try
+        {
+            return PrepareSingleShader(state, shaderIndex, raw, symbols);
+        }
+        catch (Exception ex)
+        {
+            Interlocked.Increment(ref state.Failed);
+            state.LogError($"Shader {shaderIndex}: prep exception: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static PreparedShader PrepareSingleShader(ShaderSourceState state, int shaderIndex, byte[] raw, MaterialSymbolSource? symbols)
     {
         ShaderContainerInfo? container = state.ContainerByShaderIndex.TryGetValue(shaderIndex, out ShaderContainerInfo? mappedContainer)
             ? mappedContainer
@@ -203,7 +242,6 @@ internal static class ShaderBinaries
 
         byte[] strippedCode = UnrealShaderParser.Parse(raw, out ShaderBinaryFormat detectedFormat, out UnrealShaderParser.UnrealMetadata? unrealMetadata);
 
-        state.UsageByShaderIndex.TryGetValue(shaderIndex, out HashSet<string>? usedBy);
         MaterialSymbolSource? bestSource = symbols is null ? null : symbols with
         {
             Metadata = Clone(symbols.Metadata),
@@ -282,19 +320,11 @@ internal static class ShaderBinaries
             DebugDumpStem = state.Request.DumpFailures ? (bestSource != null ? "with-symbols" : "no-symbols") : null,
         };
 
-        return new ShaderPrep
+        return new PreparedShader(shaderIndex, strippedCode, engineOptions, new ShaderPrep
         {
             ShaderIndex = shaderIndex,
-            ContainerKey = containerKey,
-            MaterialName = materialName,
-            VariantSuffix = variantSuffix,
-            StrippedCode = strippedCode,
-            EngineOptions = engineOptions,
-            ProvisionalStem = provisionalStem,
-            Metadata = metadata,
             ContainerInfo = container,
-            UsedBy = usedBy,
-        };
+        });
     }
 
     /// <summary>A per-shader copy, because the decompiler fills the symbols it is handed.</summary>

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.FileProvider.Vfs;
 using Ruri.ShaderTools;
@@ -110,8 +111,13 @@ internal sealed class ShaderSourceState
     public EngineUbMetadataRegistry EngineUbRegistry { get; set; } = EngineUbMetadataRegistry.Empty;
     public ShaderTypeSeedRegistry ShaderTypeSeedRegistry { get; set; } = ShaderTypeSeedRegistry.Empty;
 
-    public Dictionary<int, ShaderPrep> ShaderPrepByIndex { get; } = new();
-    public Dictionary<int, DecompileResult> DecompileResultByIndex { get; } = new();
+    /// <summary>
+    /// The shaders prepared and decompiled so far that some map still to be written names.
+    /// Filled while the archive streams and emptied as its maps are written, so at any moment
+    /// they hold the work in flight rather than the archive.
+    /// </summary>
+    public ConcurrentDictionary<int, ShaderPrep> ShaderPrepByIndex { get; } = new();
+    public ConcurrentDictionary<int, DecompileResult> DecompileResultByIndex { get; } = new();
 
     public int Decompiled;
     public int Skipped;
@@ -167,16 +173,15 @@ internal sealed class ShaderMapMember
     public int ArchiveShaderIndex { get; init; }
 }
 
+/// <summary>
+/// What the emitter reads of a prepared shader. The code and the options it was decompiled
+/// with go to the decompiler and nowhere else, so they are not kept past the handing over.
+/// </summary>
 internal sealed class ShaderPrep
 {
     public required int ShaderIndex { get; init; }
-    public required string ContainerKey { get; init; }
-    public required string MaterialName { get; init; }
-    public required string VariantSuffix { get; init; }
-    public required byte[] StrippedCode { get; init; }
-    public required DecompileOptions EngineOptions { get; init; }
-    public required string ProvisionalStem { get; init; }
-    public required SerializedProgramData Metadata { get; init; }
     public ShaderContainerInfo? ContainerInfo { get; init; }
-    public HashSet<string>? UsedBy { get; init; }
 }
+
+/// <summary>One shader ready for the decompiler: its code and options for the decompile, and what the emitter keeps of it.</summary>
+internal readonly record struct PreparedShader(int ShaderIndex, byte[] Code, DecompileOptions Options, ShaderPrep Prep);

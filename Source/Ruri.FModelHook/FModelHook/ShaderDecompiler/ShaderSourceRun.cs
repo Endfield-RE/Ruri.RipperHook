@@ -90,21 +90,13 @@ public static class ShaderSourceRun
             ShaderLabProperties.Build(state);
             ShaderLabRenderState.Build(state);
             long describedMs = stopwatch.ElapsedMilliseconds;
-            ShaderBinaries.Build(state);
-            long fetchedMs = stopwatch.ElapsedMilliseconds - describedMs;
-            long decompiledMs = 0, emittedMs = 0;
-
-            long beforeDecompile = stopwatch.ElapsedMilliseconds;
-            using (ShaderDecompilerEngine engine = new(outputDirectory))
+            using (ShaderDecompilerEngine engine = new())
             {
-                Decompile(state, engine);
+                Stream(state, engine);
             }
-            decompiledMs = stopwatch.ElapsedMilliseconds - beforeDecompile;
-            Parallel.ForEach(state.ShaderMaps, map => ShaderLabEmitter.Emit(state, map));
-            emittedMs = stopwatch.ElapsedMilliseconds - beforeDecompile - decompiledMs;
             stopwatch.Stop();
             ShaderLibrary library = pending[0].Placement.Library;
-            log($"[ShaderSource] {archiveName}: shader-maps={state.ShaderMaps.Count} decompiled={state.Decompiled} skipped={state.Skipped} failed={state.Failed}, read {library.BytesRead / (1024 * 1024)} MB of the archive's {library.Size / (1024 * 1024)} MB, in {stopwatch.ElapsedMilliseconds} ms (described {describedMs}, fetched {fetchedMs}, decompiled {decompiledMs}, emitted {emittedMs}) -> {outputDirectory}");
+            log($"[ShaderSource] {archiveName}: shader-maps={state.ShaderMaps.Count} decompiled={state.Decompiled} skipped={state.Skipped} failed={state.Failed}, read {library.BytesRead / (1024 * 1024)} MB of the archive's {library.Size / (1024 * 1024)} MB, in {stopwatch.ElapsedMilliseconds} ms (described {describedMs}, prepared, decompiled and written in {stopwatch.ElapsedMilliseconds - describedMs}) -> {outputDirectory}");
 
             archives.Add(new ShaderSourceArchive(archiveName, state.ShaderMaps.Count, state.Decompiled, outputDirectory));
             maps += state.ShaderMaps.Count;
@@ -118,36 +110,43 @@ public static class ShaderSourceRun
     }
 
     /// <summary>
-    /// Every shader this archive's maps name, decompiled as ONE batch.
+    /// Every shader this archive's maps name, prepared, decompiled and written as ONE stream.
     ///
-    /// The batch runner spreads its queue over a worker per core, so the batch is only as wide
-    /// as what it is handed. Handing it one map at a time handed it forty-odd shaders whose
-    /// costs differ by orders of magnitude: the workers finished early and waited on the one
-    /// slow shader, and the pool, the gate and a decompiler per worker were built again for the
-    /// next map. A pass already holds every result it has decompiled until it has written them,
-    /// so batching the pass whole costs no more memory than batching it a map at a time.
+    /// The shaders are prepared in the order the maps name them and decompiled across every
+    /// core while the rest are still being prepared. A map is written the moment its last
+    /// shader is in, and a shader is let go once every map naming it has been written, so what
+    /// the archive occupies is the work in flight. Collecting every result before writing any
+    /// held each shader's source, symbols and SPIR-V until the archive's last shader was in --
+    /// about 190 KB a shader, and the first 250-material pass of one install names sixteen
+    /// thousand of them.
+    ///
+    /// One stream per archive rather than one per map: the pool is only as wide as what it is
+    /// handed, and a map is forty-odd shaders whose costs differ by orders of magnitude, so per
+    /// map the workers finished early and waited on each map's one slow shader.
     /// </summary>
-    private static void Decompile(ShaderSourceState state, ShaderDecompilerEngine engine)
+    private static void Stream(ShaderSourceState state, ShaderDecompilerEngine engine)
     {
-        var pending = new List<ShaderPrep>(state.ShaderPrepByIndex.Count);
-        var seen = new HashSet<int>();
-        foreach (ShaderMapInfo map in state.ShaderMaps)
+        ShaderEmissionSchedule schedule = new(state);
+        int[] shaderBySequence = new int[schedule.ShaderCount];
+        engine.DecompileEach(Requests(state, schedule, shaderBySequence), (sequence, result) =>
         {
-            foreach (ShaderMapMember member in map.Members)
-            {
-                if (!state.ShaderPrepByIndex.TryGetValue(member.ArchiveShaderIndex, out ShaderPrep? prep)) continue;
-                if (!seen.Add(prep.ShaderIndex)) continue;
-                pending.Add(prep);
-            }
-        }
-        if (pending.Count == 0) return;
+            int shaderIndex = shaderBySequence[sequence];
+            state.DecompileResultByIndex[shaderIndex] = result;
+            schedule.Decompiled(shaderIndex);
+        });
+        schedule.WriteEmptyMaps();
+        schedule.ConfirmEveryMapWritten();
+    }
 
-        var batch = new (byte[] Binary, EngineDecompileOptions Options)[pending.Count];
-        for (int i = 0; i < pending.Count; i++) batch[i] = (pending[i].StrippedCode, pending[i].EngineOptions);
-        DecompileResult[] results = engine.Decompile(batch);
-        for (int i = 0; i < pending.Count; i++)
+    /// <summary>The prepared shaders as the decompiler takes them, each position remembered so its result finds its shader.</summary>
+    private static IEnumerable<(byte[] Binary, EngineDecompileOptions Options)> Requests(
+        ShaderSourceState state, ShaderEmissionSchedule schedule, int[] shaderBySequence)
+    {
+        int sequence = 0;
+        foreach (PreparedShader shader in ShaderBinaries.Prepare(state, schedule))
         {
-            state.DecompileResultByIndex[pending[i].ShaderIndex] = results[i];
+            shaderBySequence[sequence++] = shader.ShaderIndex;
+            yield return (shader.Code, shader.Options);
         }
     }
     /// <summary>
