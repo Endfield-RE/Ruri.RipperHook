@@ -14,15 +14,6 @@ internal static class MaterialConstantBufferReader
     /// </summary>
     public static MaterialPreshaderOpcodes Opcodes { get; set; } = MaterialPreshaderOpcodes.Identity;
 
-    /// <summary>Per material, every preshader-filled field with the program that computes it, at its absolute byte offset in the buffer.</summary>
-    public static readonly Dictionary<string, List<PreshaderField>> EvaluatedCbufferFields = new(StringComparer.Ordinal);
-
-    private static void ResetMaterialTables(string materialPath)
-    {
-        if (string.IsNullOrEmpty(materialPath)) return;
-        EvaluatedCbufferFields.Remove(materialPath);
-    }
-
     /// <summary>
     /// The names of every numeric parameter a preshader program reads, walking the program
     /// by each opcode's operand size the way the evaluator does; a program with an opcode
@@ -84,16 +75,6 @@ internal static class MaterialConstantBufferReader
         return names;
     }
 
-    private static void RecordField(string? materialPath, PreshaderField field)
-    {
-        if (string.IsNullOrEmpty(materialPath)) return;
-        if (!EvaluatedCbufferFields.TryGetValue(materialPath, out List<PreshaderField>? fields))
-        {
-            EvaluatedCbufferFields[materialPath] = fields = new List<PreshaderField>();
-        }
-        fields.Add(field);
-    }
-
     /// <summary>
     /// A field's value for the given numeric parameters -- the same parameter array the
     /// expression set carries, with any parameter's <c>Value</c> replaced by what a material
@@ -116,8 +97,15 @@ internal static class MaterialConstantBufferReader
     private static readonly string? PreshaderDebugFilter =
         Environment.GetEnvironmentVariable("RURI_PRESHADER_DEBUG");
 
-    public static ConstantBufferParameter? Read(FUniformExpressionSet uniformExpressionSet, string? materialPath = null)
+    /// <summary>
+    /// The material's own constant buffer as its expression set lays it out, and in
+    /// <paramref name="fields"/> every member a preshader program fills, each with the program
+    /// that computes it -- handed back to the caller that asked, never kept here.
+    /// </summary>
+    public static ConstantBufferParameter? Read(FUniformExpressionSet uniformExpressionSet, string? materialPath, out IReadOnlyList<PreshaderField> fields)
     {
+        List<PreshaderField> recorded = new();
+        fields = recorded;
         MaterialExpressions? expressions = MaterialExpressions.Of(uniformExpressionSet);
         if (expressions is null)
         {
@@ -137,8 +125,6 @@ internal static class MaterialConstantBufferReader
         int vtUniformBytes = expressions.VirtualUniformBytes;
         int numericRegionEnd = expressions.NumericRegionEnd;
         int preshaderBufferStart = vtPageTableBytes + vtUniformBytes;
-
-        ResetMaterialTables(materialPath ?? string.Empty);
 
         HashSet<int> seenOffsets = new();
         HashSet<string> seenNames = new(StringComparer.Ordinal);
@@ -221,7 +207,7 @@ internal static class MaterialConstantBufferReader
                 case FieldKind.Numeric:
                 {
                     string memberName = RegisterUniqueName(seenNames, baseName, byteOffset);
-                    RecordField(materialPath, new PreshaderField(memberName, byteOffset, rows, opcodeOffset, opcodeSize, fieldSlot, numFields, opcodeProgram, ReferencedParameters(opcodeData, opcodeOffset, opcodeSize, uniformNumericParameters)));
+                    recorded.Add(new PreshaderField(memberName, byteOffset, rows, opcodeOffset, opcodeSize, fieldSlot, numFields, opcodeProgram, ReferencedParameters(opcodeData, opcodeOffset, opcodeSize, uniformNumericParameters)));
                     for (int comp = 1; comp < rows; comp++) seenOffsets.Add(byteOffset + comp * 4);
                     AddVectorMember(vectorParams, memberName, byteOffset, rows, ShaderParamType.Float);
                     break;
@@ -229,7 +215,7 @@ internal static class MaterialConstantBufferReader
                 case FieldKind.Int:
                 {
                     string memberName = RegisterUniqueName(seenNames, baseName, byteOffset);
-                    RecordField(materialPath, new PreshaderField(memberName, byteOffset, rows, opcodeOffset, opcodeSize, fieldSlot, numFields, opcodeProgram, ReferencedParameters(opcodeData, opcodeOffset, opcodeSize, uniformNumericParameters)));
+                    recorded.Add(new PreshaderField(memberName, byteOffset, rows, opcodeOffset, opcodeSize, fieldSlot, numFields, opcodeProgram, ReferencedParameters(opcodeData, opcodeOffset, opcodeSize, uniformNumericParameters)));
                     for (int comp = 1; comp < rows; comp++) seenOffsets.Add(byteOffset + comp * 4);
                     AddVectorMember(vectorParams, memberName, byteOffset, rows, ShaderParamType.Int);
                     break;
@@ -237,7 +223,7 @@ internal static class MaterialConstantBufferReader
                 case FieldKind.Bool:
                 {
                     string memberName = RegisterUniqueName(seenNames, baseName, byteOffset);
-                    RecordField(materialPath, new PreshaderField(memberName, byteOffset, rows, opcodeOffset, opcodeSize, fieldSlot, numFields, opcodeProgram, ReferencedParameters(opcodeData, opcodeOffset, opcodeSize, uniformNumericParameters)));
+                    recorded.Add(new PreshaderField(memberName, byteOffset, rows, opcodeOffset, opcodeSize, fieldSlot, numFields, opcodeProgram, ReferencedParameters(opcodeData, opcodeOffset, opcodeSize, uniformNumericParameters)));
                     for (int comp = 1; comp < rows; comp++) seenOffsets.Add(byteOffset + comp * 4);
                     AddVectorMember(vectorParams, memberName, byteOffset, rows, ShaderParamType.Bool);
                     break;

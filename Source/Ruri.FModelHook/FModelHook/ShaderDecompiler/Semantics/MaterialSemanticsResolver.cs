@@ -45,7 +45,6 @@ public sealed class MaterialSemanticsResolver : IDisposable
     private const int NormalChannels = 2;
     private const int SampleWidth = 4;
     private const int LaneBytes = 4;
-    private static readonly object SymbolGate = new();
 
     private readonly AbstractFileProvider provider;
     private readonly Action<string> log;
@@ -316,8 +315,8 @@ public sealed class MaterialSemanticsResolver : IDisposable
     /// <summary>
     /// The shader's bindings named by the material's own uniform-buffer layout, the way the
     /// decompiler names them, with that layout for reading the names back, the material
-    /// buffer's preshader fields, and the expression set as JSON. The decompiler's readers keep
-    /// what they read in tables shared across the process, so one map is read at a time.
+    /// buffer's preshader fields, and the expression set as JSON. The readers hand back what
+    /// they read and keep none of it, so any number of maps can be read at once.
     /// </summary>
     private SymbolReading Symbols(string materialPath, string platform, FMaterialShaderMapContent content, UnrealShaderParser.UnrealMetadata? runtimeMetadata)
     {
@@ -326,23 +325,17 @@ public sealed class MaterialSemanticsResolver : IDisposable
         IReadOnlyList<PreshaderField> fields = Array.Empty<PreshaderField>();
         FUniformExpressionSet? uniformExpressions = content.MaterialCompilationOutput?.UniformExpressionSet;
         PreshaderInputs? preshaders = PreshaderInputs.Of(uniformExpressions);
-        lock (SymbolGate)
+        if (uniformExpressions is not null)
         {
-            if (uniformExpressions is not null)
+            SymbolInputs? inputs = SymbolInputsReader.ReadFromUniformExpressionSet(materialPath, platform, uniformExpressions);
+            if (inputs is not null)
             {
-                SymbolInputs? inputs = SymbolInputsReader.ReadFromUniformExpressionSet(materialPath, platform, uniformExpressions);
-                if (inputs is not null)
-                {
-                    layout = inputs.MaterialResourceCounts is { } counts ? new MaterialUniformBufferLayout(counts) : null;
-                    source = new MaterialSymbolSource(materialPath, MaterialSymbolMetadataBuilder.Build(inputs), 0, true, layout);
-                }
-                if (MaterialConstantBufferReader.EvaluatedCbufferFields.TryGetValue(materialPath, out List<PreshaderField>? read))
-                {
-                    fields = read.ToArray();
-                }
+                layout = inputs.MaterialResourceCounts is { } counts ? new MaterialUniformBufferLayout(counts) : null;
+                source = new MaterialSymbolSource(materialPath, MaterialSymbolMetadataBuilder.Build(inputs), 0, true, layout);
+                fields = inputs.MaterialBufferFields;
             }
-            return new SymbolReading(SubProgramMetadataReader.Read(runtimeMetadata, source, null, log), layout, fields, preshaders);
         }
+        return new SymbolReading(SubProgramMetadataReader.Read(runtimeMetadata, source, null, log), layout, fields, preshaders);
     }
 
     /// <summary>The binding of the material's own constant buffer, or -1 when the symbols name none.</summary>

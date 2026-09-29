@@ -5,9 +5,9 @@ using CUE4Parse.UE4.Assets.Exports.Material;
 namespace Ruri.FModelHook.ShaderDecompiler;
 
 /// <summary>
-/// The knobs a material exposes, written as a shaderlab Properties block, and the constant-buffer
-/// members each preshader program fills. Both are read from the expression set the map itself
-/// compiled from, so a map with no material behind it simply has none.
+/// The knobs a material exposes, written as a shaderlab Properties block, and the order its
+/// textures bind in. Both are read from the expression set the map itself compiled from, so a
+/// map with no material behind it simply has none.
 /// </summary>
 internal static class ShaderLabProperties
 {
@@ -28,8 +28,6 @@ internal static class ShaderLabProperties
                 populated++;
             }
 
-            string asset = map.PrimaryAsset;
-            MaterialConstantBufferReader.Read(uniformExpressions, asset);
             map.MaterialTextureOrder = new List<string>(MaterialTextureOrder.Extract(uniformExpressions, out List<int> textureBuckets));
             map.MaterialTextureBuckets = textureBuckets;
         }

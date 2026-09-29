@@ -23,6 +23,7 @@ internal sealed class SymbolInputs
     public string? ShaderPlatform { get; set; }
     public bool UsedLoadedMaterialResources { get; set; }
     public ConstantBufferParameter? MaterialConstantBuffer { get; set; }
+    public IReadOnlyList<PreshaderField> MaterialBufferFields { get; set; } = Array.Empty<PreshaderField>();
     public List<FMaterialParameterInfo> NumericParameterInfos { get; } = new();
     public MaterialUniformBufferLayout.MaterialResources? MaterialResourceCounts { get; set; }
     public List<ConstantBufferParameter> ExtraConstantBuffers { get; } = new();
