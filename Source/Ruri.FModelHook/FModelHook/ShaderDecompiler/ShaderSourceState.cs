@@ -31,8 +31,6 @@ public sealed class ShaderSourceRequest
 
     public uint ShaderModel { get; init; } = 51;
 
-    public bool DumpFailures { get; init; } = true;
-
     public bool SplitVariantsToHlslFiles { get; init; }
 
     /// <summary>
@@ -77,14 +75,16 @@ public sealed record ShaderSourceSummary(int ShaderMaps, int Decompiled, int Ski
 /// <summary>One archive's worth of a run: the maps asked about that it carries, and what came of them.</summary>
 internal sealed class ShaderSourceState
 {
-    public ShaderSourceState(ShaderSourceRequest request, ShaderLibrary library, string archiveName, string outputDirectory)
+    public ShaderSourceState(ShaderSourceRequest request, EngineMetadata metadata, ShaderLibrary library,
+        string archiveName, string outputDirectory, OutputWriter writer)
     {
         Request = request;
+        Metadata = metadata;
         Library = library;
         ArchiveName = archiveName;
         OutputDirectory = outputDirectory;
-        FailuresRoot = Path.Combine(outputDirectory, "_failures");
-        Variants = new VariantPool(outputDirectory);
+        Writer = writer;
+        Variants = new VariantPool(outputDirectory, writer);
         Log = request.Log ?? (_ => { });
         LogError = request.LogError ?? (_ => { });
     }
@@ -92,24 +92,19 @@ internal sealed class ShaderSourceState
     /// <summary>Where this archive's shader variants land, one file per distinct text.</summary>
     public VariantPool Variants { get; }
 
+    /// <summary>The run's one writer, which every file of this archive goes through.</summary>
+    public OutputWriter Writer { get; }
+
     public ShaderSourceRequest Request { get; }
+    public EngineMetadata Metadata { get; }
     public Action<string> Log { get; }
     public Action<string> LogError { get; }
 
     public ShaderLibrary Library { get; }
     public string ArchiveName { get; }
     public string OutputDirectory { get; }
-    public string FailuresRoot { get; }
 
     public List<ShaderMapInfo> ShaderMaps { get; } = new();
-
-    public Dictionary<int, HashSet<string>> UsageByShaderIndex { get; } = new();
-    public Dictionary<int, string> NameByShaderIndex { get; } = new();
-    public Dictionary<int, ShaderContainerInfo> ContainerByShaderIndex { get; } = new();
-    public Dictionary<int, FShaderParameterMapInfo> ShaderParameterMapInfoByArchiveIndex { get; } = new();
-
-    public EngineUbMetadataRegistry EngineUbRegistry { get; set; } = EngineUbMetadataRegistry.Empty;
-    public ShaderTypeSeedRegistry ShaderTypeSeedRegistry { get; set; } = ShaderTypeSeedRegistry.Empty;
 
     /// <summary>
     /// The shaders prepared and decompiled so far that some map still to be written names.
@@ -141,30 +136,68 @@ internal sealed class ShaderContainerInfo
     public string ShaderHash { get; init; } = string.Empty;
 }
 
+/// <summary>
+/// One map an archive's stream writes. Where it is and which shaders it names are known from the
+/// index and the archive's own tables before the stream starts; what its first namer states about
+/// it -- each shader's identity and parameter map, the symbols its shaders are named from, the
+/// properties and the render state -- is read when the map's turn comes, and is all the map keeps
+/// of that asset.
+/// </summary>
 internal sealed class ShaderMapInfo
 {
-    public required ShaderMapTarget Target { get; init; }
-    public string ShaderMapHash => Target.ShaderMapHash;
-    public List<string> Assets { get; init; } = new();
-    public string PrimaryAsset { get; init; } = string.Empty;
-    public string PrimaryName { get; init; } = string.Empty;
-    public List<ShaderMapMember> Members { get; init; } = new();
-    public Dictionary<int, ShaderContainerInfo> ContainerByShaderIndex { get; init; } = new();
+    public required string ShaderMapHash { get; init; }
+    public required ShaderMapCatalog.Placement Placement { get; init; }
+    public required IShaderMapSubject? Source { get; init; }
+    public required string ShaderPlatform { get; init; }
+    public required List<string> Assets { get; init; }
+    public required string PrimaryAsset { get; init; }
+    public required string PrimaryName { get; init; }
+    public required List<ShaderMapMember> Members { get; init; }
+
+    public Dictionary<int, ShaderContainerInfo> ContainerByShaderIndex { get; set; } = new();
+    public Dictionary<int, FShaderParameterMapInfo> ParameterMapByShaderIndex { get; set; } = new();
+    public MaterialSymbolSource? Symbols { get; set; }
     public string PropertiesBlock { get; set; } = string.Empty;
-
     public List<string> MaterialTextureOrder { get; set; } = new();
-
     public List<int> MaterialTextureBuckets { get; set; } = new();
-
-
-
-
     public string SubShaderTags { get; set; } = string.Empty;
     public string PassCommands { get; set; } = string.Empty;
 
-    /// <summary>The expression set this map compiled from, which states every symbol its shaders bind.</summary>
-    public FUniformExpressionSet? UniformExpressions =>
-        (Target.ShaderMap?.Content as FMaterialShaderMapContent)?.MaterialCompilationOutput?.UniformExpressionSet;
+    /// <summary>
+    /// One indexed map as its archive's stream starts it: named after the asset that named it
+    /// first, the shaders it owns being its run of the archive's shared index list.
+    /// </summary>
+    public static ShaderMapInfo Of(IndexedMap indexed)
+    {
+        ShaderMapCatalog.Placement placement = indexed.Placement;
+        List<ShaderMapMember> members = new((int)placement.Map.NumShaders);
+        for (uint member = 0; member < placement.Map.NumShaders; member++)
+        {
+            long offset = placement.Map.ShaderIndicesOffset + member;
+            if (offset < 0 || offset >= placement.Library.ShaderIndices.Length)
+            {
+                continue;
+            }
+            int shaderIndex = (int)placement.Library.ShaderIndices[offset];
+            if (shaderIndex < 0 || shaderIndex >= placement.Library.ShaderEntries.Length)
+            {
+                continue;
+            }
+            members.Add(new ShaderMapMember { RelativeIndex = (int)member, ArchiveShaderIndex = shaderIndex });
+        }
+        string primaryName = Path.GetFileNameWithoutExtension(indexed.PrimaryAsset);
+        return new ShaderMapInfo
+        {
+            ShaderMapHash = indexed.ShaderMapHash,
+            Placement = placement,
+            Source = indexed.Source,
+            ShaderPlatform = indexed.ShaderPlatform,
+            Assets = [.. indexed.NamedBy],
+            PrimaryAsset = indexed.PrimaryAsset,
+            PrimaryName = string.IsNullOrWhiteSpace(primaryName) ? "UnknownMaterial" : primaryName,
+            Members = members,
+        };
+    }
 }
 
 internal sealed class ShaderMapMember

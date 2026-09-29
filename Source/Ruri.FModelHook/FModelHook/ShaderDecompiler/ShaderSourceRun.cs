@@ -1,6 +1,5 @@
 using System.Diagnostics;
-using CUE4Parse.FileProvider.Vfs;
-using CUE4Parse.UE4.Assets.Exports.Material;
+using System.Runtime.ExceptionServices;
 using Ruri.ShaderTools;
 using EngineDecompileOptions = Ruri.ShaderTools.DecompileOptions;
 using ShaderDecompilerEngine = Ruri.ShaderTools.ShaderDecompiler;
@@ -10,11 +9,13 @@ namespace Ruri.FModelHook.ShaderDecompiler;
 /// <summary>
 /// The source of the shaders a set of assets compiled to.
 ///
-/// Six steps, each a function of the one before it, and none of them install-wide: the assets
-/// asked about name their shader maps, the catalog says which archive carries each, the library
-/// reads exactly those shaders out of it, the material's own map says what each shader is, the
-/// engine decompiles it and the emitter writes it. There is nothing to filter afterwards because
-/// nothing was gathered that was not asked for.
+/// Two stages, and neither of them install-wide beyond what was asked. The index resolves every
+/// subject into the maps it names -- each map's hash, the archive that carries it and every asset
+/// that named it -- keeping nothing of the assets but that. Then each archive is one stream: the
+/// maps are read from their first namer in the order they were named, every shader they name is
+/// read out of the archive and decompiled once, and each map is written the moment its shaders
+/// are in, each shader let go once the last map naming it is written. Nothing is gathered that
+/// was not asked for, nothing is decompiled twice, and nothing but the source reaches the disk.
 /// </summary>
 public static class ShaderSourceRun
 {
@@ -29,82 +30,74 @@ public static class ShaderSourceRun
         Action<string> logError = request.LogError ?? (_ => { });
 
         Stopwatch whole = Stopwatch.StartNew();
-        Stopwatch phase = Stopwatch.StartNew();
-        List<ShaderMapTarget> targets = Resolve(request, log, logError);
-        long resolveMs = phase.ElapsedMilliseconds;
-        if (targets.Count == 0)
+        string gameVersion = request.Provider.Versions.Game.ToString();
+        EngineMetadata metadata = EngineMetadata.Cached(request.EngineUbMetadataDirectory, gameVersion, log, logError);
+        MaterialConstantBufferReader.Opcodes = metadata.PreshaderOpcodes;
+        MaterialUniformBufferRecipe.Current = metadata.MaterialUniformBuffer;
+
+        ShaderMapIndex index = ShaderMapIndex.Build(request, ShaderMapCatalog.For(request.Provider), log, logError);
+        if (index.Distinct == 0)
         {
             log("[ShaderSource] nothing named a compiled shader map.");
             return new ShaderSourceSummary(0, 0, 0, 0, []);
         }
 
-        phase.Restart();
-        string gameVersion = request.Provider.Versions.Game.ToString();
-        EngineMetadata metadata = EngineMetadata.Cached(request.EngineUbMetadataDirectory, gameVersion, log, logError);
-        MaterialConstantBufferReader.Opcodes = metadata.PreshaderOpcodes;
-        MaterialUniformBufferRecipe.Current = metadata.MaterialUniformBuffer;
-        long metadataMs = phase.ElapsedMilliseconds;
-
-        phase.Restart();
-        ShaderMapCatalog catalog = ShaderMapCatalog.For(request.Provider);
-        Dictionary<string, List<(ShaderMapTarget Target, ShaderMapCatalog.Placement Placement)>> byArchive =
-            new(StringComparer.OrdinalIgnoreCase);
-        foreach (ShaderMapTarget target in targets)
-        {
-            if (!catalog.TryPlace(target.ShaderMapHash, log, logError, out ShaderMapCatalog.Placement placement))
-            {
-                logError($"[ShaderSource] '{target.AssetPath}': no archive carries shader map {target.ShaderMapHash}.");
-                continue;
-            }
-            if (!byArchive.TryGetValue(placement.ArchiveName, out var group))
-            {
-                group = new List<(ShaderMapTarget, ShaderMapCatalog.Placement)>();
-                byArchive[placement.ArchiveName] = group;
-            }
-            group.Add((target, placement));
-        }
-        log($"[ShaderSource] timing: named maps in {resolveMs} ms, engine facts in {metadataMs} ms, placed in {phase.ElapsedMilliseconds} ms ({catalog.OpenedArchiveCount} archive(s) open, {catalog.IndexedMapCount} maps indexed).");
-
         int maps = 0, decompiled = 0, skipped = 0, failed = 0, alreadyWritten = 0;
-        List<ShaderSourceArchive> archives = new(byArchive.Count);
-        foreach ((string archiveName, var group) in byArchive.OrderBy(static one => one.Key, StringComparer.OrdinalIgnoreCase))
+        List<ShaderSourceArchive> archives = new(index.Archives.Count);
+        OutputWriter writer = new();
+        ExceptionDispatchInfo? stopped = null;
+        try
         {
-            string outputDirectory = Path.Combine(request.OutputDirectory, archiveName).Replace('\\', '/');
-            List<(ShaderMapTarget Target, ShaderMapCatalog.Placement Placement)> pending = group;
-            if (request.ResumeFromOutput)
+            using ShaderDecompilerEngine engine = new();
+            foreach (IndexedArchive archive in index.Archives)
             {
-                HashSet<string> written = ShaderLabEmitter.Written(outputDirectory);
-                pending = group.Where(one => !written.Contains(ShaderLabEmitter.HashPrefix(one.Target.ShaderMapHash))).ToList();
-                alreadyWritten += group.Count - pending.Count;
-                if (pending.Count == 0)
+                string outputDirectory = Path.Combine(request.OutputDirectory, archive.Name).Replace('\\', '/');
+                List<IndexedMap> pending = archive.Maps;
+                if (request.ResumeFromOutput)
                 {
-                    continue;
+                    HashSet<string> written = ShaderLabEmitter.Written(outputDirectory);
+                    pending = archive.Maps.Where(map => !written.Contains(ShaderLabEmitter.HashPrefix(map.ShaderMapHash))).ToList();
+                    alreadyWritten += archive.Maps.Count - pending.Count;
+                    if (pending.Count == 0)
+                    {
+                        continue;
+                    }
                 }
-            }
-            ShaderSourceState state = new(request, pending[0].Placement.Library, archiveName, outputDirectory);
-            state.EngineUbRegistry = metadata.UniformBuffers;
-            state.ShaderTypeSeedRegistry = metadata.ShaderTypes;
+                ShaderSourceState state = new(request, metadata, archive.Library, archive.Name, outputDirectory, writer);
+                foreach (IndexedMap indexed in pending)
+                {
+                    state.ShaderMaps.Add(ShaderMapInfo.Of(indexed));
+                }
 
-            Stopwatch stopwatch = Stopwatch.StartNew();
-            Build(state, pending, metadata);
-            ShaderLabProperties.Build(state);
-            ShaderLabRenderState.Build(state);
-            long describedMs = stopwatch.ElapsedMilliseconds;
-            using (ShaderDecompilerEngine engine = new())
-            {
+                Stopwatch stopwatch = Stopwatch.StartNew();
                 Stream(state, engine);
-            }
-            stopwatch.Stop();
-            ShaderLibrary library = pending[0].Placement.Library;
-            log($"[ShaderSource] {archiveName}: shader-maps={state.ShaderMaps.Count} decompiled={state.Decompiled} skipped={state.Skipped} failed={state.Failed}, read {library.BytesRead / (1024 * 1024)} MB of the archive's {library.Size / (1024 * 1024)} MB, in {stopwatch.ElapsedMilliseconds} ms (described {describedMs}, prepared, decompiled and written in {stopwatch.ElapsedMilliseconds - describedMs}) -> {outputDirectory}");
+                ShaderLibrary library = archive.Library;
+                log($"[ShaderSource] {archive.Name}: shader-maps={state.ShaderMaps.Count} decompiled={state.Decompiled} skipped={state.Skipped} failed={state.Failed}, "
+                    + $"{state.Variants.Written} variant file(s) new and {state.Variants.Shared} shared, read {library.BytesRead / (1024 * 1024)} MB of the archive's {library.Size / (1024 * 1024)} MB, "
+                    + $"in {stopwatch.ElapsedMilliseconds} ms -> {outputDirectory}");
 
-            archives.Add(new ShaderSourceArchive(archiveName, state.ShaderMaps.Count, state.Decompiled, outputDirectory));
-            maps += state.ShaderMaps.Count;
-            decompiled += state.Decompiled;
-            skipped += state.Skipped;
-            failed += state.Failed;
+                archives.Add(new ShaderSourceArchive(archive.Name, state.ShaderMaps.Count, state.Decompiled, outputDirectory));
+                maps += state.ShaderMaps.Count;
+                decompiled += state.Decompiled;
+                skipped += state.Skipped;
+                failed += state.Failed;
+            }
         }
-        log($"[ShaderSource] whole run {whole.ElapsedMilliseconds} ms: {maps} map(s), {decompiled} decompiled, {failed} failed"
+        catch (Exception exception)
+        {
+            stopped = ExceptionDispatchInfo.Capture(exception);
+        }
+        try
+        {
+            writer.Complete();
+        }
+        catch when (stopped is not null)
+        {
+        }
+        stopped?.Throw();
+
+        log($"[ShaderSource] whole run {whole.ElapsedMilliseconds} ms: {maps} map(s), {decompiled} decompiled, {failed} failed, "
+            + $"{writer.FilesWritten} file(s) written ({writer.CharactersWritten / (1024 * 1024)} M characters)"
             + (alreadyWritten > 0 ? $", {alreadyWritten} map(s) already written." : "."));
         return new ShaderSourceSummary(maps, decompiled, skipped, failed, archives);
     }
@@ -112,13 +105,10 @@ public static class ShaderSourceRun
     /// <summary>
     /// Every shader this archive's maps name, prepared, decompiled and written as ONE stream.
     ///
-    /// The shaders are prepared in the order the maps name them and decompiled across every
-    /// core while the rest are still being prepared. A map is written the moment its last
-    /// shader is in, and a shader is let go once every map naming it has been written, so what
-    /// the archive occupies is the work in flight. Collecting every result before writing any
-    /// held each shader's source, symbols and SPIR-V until the archive's last shader was in --
-    /// about 190 KB a shader, and the first 250-material pass of one install names sixteen
-    /// thousand of them.
+    /// The maps are read in the order they were named, and their shaders prepared in that order
+    /// and decompiled across every core while the rest are still being read. A map is written the
+    /// moment its shaders and its facts are in, and a shader is let go once every map naming it
+    /// has been written, so what the archive occupies is the work in flight.
     ///
     /// One stream per archive rather than one per map: the pool is only as wide as what it is
     /// handed, and a map is forty-odd shaders whose costs differ by orders of magnitude, so per
@@ -134,7 +124,6 @@ public static class ShaderSourceRun
             state.DecompileResultByIndex[shaderIndex] = result;
             schedule.Decompiled(shaderIndex);
         });
-        schedule.WriteEmptyMaps();
         schedule.ConfirmEveryMapWritten();
     }
 
@@ -149,152 +138,6 @@ public static class ShaderSourceRun
             yield return (shader.Code, shader.Options);
         }
     }
-    /// <summary>
-    /// Every DISTINCT shader map the subjects name, in the order they were first named, each
-    /// carrying every asset that named it.
-    ///
-    /// The map is the unit of work because the map is the unit the engine compiled: two materials
-    /// that name the same hash name the same bytes, and the source written for them would be
-    /// identical but for the folder it landed in.
-    /// </summary>
-    private static List<ShaderMapTarget> Resolve(ShaderSourceRequest request, Action<string> log, Action<string> logError)
-    {
-        List<ShaderMapTarget> targets = new();
-        Dictionary<string, ShaderMapTarget> byHash = new(StringComparer.OrdinalIgnoreCase);
-        int named = 0;
-        foreach (IShaderMapSubject subject in request.Subjects)
-        {
-            foreach (ShaderMapTarget target in subject.Resolve(request.Provider, log, logError))
-            {
-                named++;
-                if (byHash.TryGetValue(target.ShaderMapHash, out ShaderMapTarget? already))
-                {
-                    if (!already.NamedBy.Contains(target.AssetPath, StringComparer.OrdinalIgnoreCase))
-                    {
-                        already.NamedBy.Add(target.AssetPath);
-                    }
-                    continue;
-                }
-                target.NamedBy.Add(target.AssetPath);
-                byHash[target.ShaderMapHash] = target;
-                targets.Add(target);
-            }
-        }
-        log($"[ShaderSource] {request.Subjects.Count} subject(s) named {named} map(s), {targets.Count} of them distinct.");
-        return targets;
-    }
-
-    /// <summary>
-    /// One archive's maps as the emitters take them: the shaders each map owns, what each shader
-    /// is, and what the map is named after.
-    /// </summary>
-    private static void Build(
-        ShaderSourceState state,
-        List<(ShaderMapTarget Target, ShaderMapCatalog.Placement Placement)> group,
-        EngineMetadata metadata)
-    {
-        foreach ((ShaderMapTarget target, ShaderMapCatalog.Placement placement) in group)
-        {
-            string primaryName = Path.GetFileNameWithoutExtension(target.AssetPath);
-            if (string.IsNullOrWhiteSpace(primaryName))
-            {
-                primaryName = "UnknownMaterial";
-            }
-
-            List<ShaderMapMember> members = new((int)placement.Map.NumShaders);
-            for (uint member = 0; member < placement.Map.NumShaders; member++)
-            {
-                long offset = placement.Map.ShaderIndicesOffset + member;
-                if (offset < 0 || offset >= placement.Library.ShaderIndices.Length)
-                {
-                    continue;
-                }
-                int shaderIndex = (int)placement.Library.ShaderIndices[offset];
-                if (shaderIndex < 0 || shaderIndex >= placement.Library.ShaderEntries.Length)
-                {
-                    continue;
-                }
-                members.Add(new ShaderMapMember { RelativeIndex = (int)member, ArchiveShaderIndex = shaderIndex });
-            }
-
-            Dictionary<int, ShaderContainerInfo> containers = ShaderMapIdentity.Of(
-                target, placement, primaryName,
-                metadata.ShaderTypes, metadata.VertexFactoryTypes, metadata.PipelineTypes);
-
-            ShaderMapInfo map = new()
-            {
-                Target = target,
-                Assets = [.. target.NamedBy],
-                PrimaryAsset = target.AssetPath,
-                PrimaryName = primaryName,
-                Members = members,
-                ContainerByShaderIndex = containers,
-            };
-            state.ShaderMaps.Add(map);
-
-            foreach (ShaderMapMember member in members)
-            {
-                if (containers.TryGetValue(member.ArchiveShaderIndex, out ShaderContainerInfo? info))
-                {
-                    state.ContainerByShaderIndex[member.ArchiveShaderIndex] = info;
-                }
-                if (!state.UsageByShaderIndex.TryGetValue(member.ArchiveShaderIndex, out HashSet<string>? usedBy))
-                {
-                    usedBy = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    state.UsageByShaderIndex[member.ArchiveShaderIndex] = usedBy;
-                }
-                foreach (string namer in target.NamedBy)
-                {
-                    usedBy.Add(namer);
-                }
-                state.NameByShaderIndex.TryAdd(member.ArchiveShaderIndex, primaryName);
-            }
-
-            ParameterMaps(state, target, members);
-        }
-    }
-
-    /// <summary>
-    /// Each shader's parameter map as the material states it, joined to the archive by the
-    /// resource index the map counts its shaders along.
-    /// </summary>
-    private static void ParameterMaps(ShaderSourceState state, ShaderMapTarget target, List<ShaderMapMember> members)
-    {
-        if (target.ShaderMap?.Content is not FMaterialShaderMapContent content)
-        {
-            return;
-        }
-        Dictionary<int, FShaderParameterMapInfo> byResourceIndex = new();
-        Collect(content.Shaders, byResourceIndex);
-        foreach (FMeshMaterialShaderMap meshMap in content.OrderedMeshShaderMaps ?? [])
-        {
-            Collect(meshMap?.Shaders, byResourceIndex);
-        }
-        if (byResourceIndex.Count == 0)
-        {
-            return;
-        }
-        foreach (ShaderMapMember member in members)
-        {
-            if (byResourceIndex.TryGetValue(member.RelativeIndex, out FShaderParameterMapInfo? parameterMap))
-            {
-                state.ShaderParameterMapInfoByArchiveIndex[member.ArchiveShaderIndex] = parameterMap;
-            }
-        }
-    }
-
-    private static void Collect(FShader[]? shaders, Dictionary<int, FShaderParameterMapInfo> destination)
-    {
-        foreach (FShader shader in shaders ?? [])
-        {
-            if (shader?.ParameterMapInfo is { } parameterMap)
-            {
-                destination[shader.ResourceIndex] = parameterMap;
-            }
-        }
-    }
-
-    /// <summary>The preshader opcode layout an engine version writes, from the game's EGame name.</summary>
 }
 
 /// <summary>

@@ -1,4 +1,4 @@
-﻿using AssetRipper.Import.Logging;
+using AssetRipper.Import.Logging;
 using AssetRipper.SourceGenerated;
 using Ruri.FModelHook.ShaderDecompiler;
 using Ruri.RipperHook.CabMapping;
@@ -93,17 +93,10 @@ public static class UnrealShaders
     }
 
     /// <summary>
-    /// How many materials one run answers about at a time when the question is a whole install.
-    ///
-    /// A run resolves every material it is asked about before it writes anything -- the package,
-    /// its compiled maps and the expression set each shader is named from -- and holds them until
-    /// its last archive is written; the shaders themselves stream through and are let go map by
-    /// map. An install's materials held that way are more than memory, so a whole install is
-    /// asked in passes of this many, each its own <see cref="DataUnit"/> so it lets go of the
-    /// packages the pass before it read, and the maps already written are what a later pass skips.
+    /// One run over every subject: the packages first, whose materials name the maps they compiled
+    /// to, then the archives asked about, which name what no package does. A map is written once,
+    /// named after the first asset that named it and listing every one that did.
     /// </summary>
-    private const int MaterialsPerPass = 250;
-
     private static ColumnTable Decompile(string id, DataRequest request, string[] packages,
         bool resumeFromOutput = false, string[]? archives = null)
     {
@@ -118,71 +111,27 @@ public static class UnrealShaders
         UnrealFileProvider provider = UnrealProviderSession.Open(request.GameRoot);
         long mountMs = clock.ElapsedMilliseconds;
 
-        IShaderMapSubject[] named = [.. (archives ?? []).Select(static one => (IShaderMapSubject)new ShaderArchiveSubject(one))];
-        if (named.Length > 0)
+        IShaderMapSubject[] subjects =
+        [
+            .. packages.Select(static path => (IShaderMapSubject)new PackageSubject(path)),
+            .. (archives ?? []).Select(static one => (IShaderMapSubject)new ShaderArchiveSubject(one)),
+        ];
+        ShaderSourceSummary summary = ShaderSourceRun.Execute(new ShaderSourceRequest
         {
-            ShaderSourceSummary whole = ShaderSourceRun.Execute(new ShaderSourceRequest
-            {
-                Provider = provider,
-                Subjects = named,
-                OutputDirectory = output,
-                SplitVariantsToHlslFiles = true,
-                ResumeFromOutput = resumeFromOutput,
-                Log = Say,
-                LogError = Complain,
-            });
-            foreach (ShaderSourceArchive archive in whole.Archives)
-            {
-                table.Row(archive.Archive, archive.ShaderMaps, archive.OutputDirectory);
-            }
-            Say($"[ShaderSource] archives answered in {clock.ElapsedMilliseconds} ms: "
-                + $"{whole.ShaderMaps} map(s), {whole.Decompiled} shader(s), {whole.Failed} failed.");
-            if (packages.Length == 0)
-            {
-                return table.Build();
-            }
-        }
-
-        int passSize = resumeFromOutput ? MaterialsPerPass : packages.Length;
-        Dictionary<string, (int Maps, string Output)> byArchive = new(StringComparer.OrdinalIgnoreCase);
-        int maps = 0, decompiled = 0, failed = 0;
-        for (int start = 0; start < packages.Length; start += Math.Max(1, passSize))
-        {
-            string[] pass = packages[start..Math.Min(packages.Length, start + Math.Max(1, passSize))];
-            ShaderSourceSummary summary;
-            using (DataUnit.Begin())
-            {
-                summary = ShaderSourceRun.Execute(new ShaderSourceRequest
-                {
-                    Provider = provider,
-                    Subjects = Array.ConvertAll(pass, static path => (IShaderMapSubject)new PackageSubject(path)),
-                    OutputDirectory = output,
-                    SplitVariantsToHlslFiles = true,
-                    ResumeFromOutput = resumeFromOutput,
-                    Log = Say,
-                    LogError = Complain,
-                });
-            }
-            maps += summary.ShaderMaps;
-            decompiled += summary.Decompiled;
-            failed += summary.Failed;
-            foreach (ShaderSourceArchive archive in summary.Archives)
-            {
-                byArchive.TryGetValue(archive.Archive, out (int Maps, string Output) already);
-                byArchive[archive.Archive] = (already.Maps + archive.ShaderMaps, archive.OutputDirectory);
-            }
-            if (passSize < packages.Length)
-            {
-                Say($"[ShaderSource] {Math.Min(packages.Length, start + pass.Length)}/{packages.Length} material(s) answered for, "
-                    + $"{maps} map(s) written so far, {clock.ElapsedMilliseconds / 1000} s elapsed.");
-            }
-        }
+            Provider = provider,
+            Subjects = subjects,
+            OutputDirectory = output,
+            SplitVariantsToHlslFiles = true,
+            ResumeFromOutput = resumeFromOutput,
+            Log = Say,
+            LogError = Complain,
+        });
         Say($"[ShaderSource] dataset answered in {clock.ElapsedMilliseconds} ms (provider ready after {mountMs} ms): "
-            + $"{maps} map(s), {decompiled} shader(s), {failed} failed.");
+            + $"{summary.ShaderMaps} map(s), {summary.Decompiled} shader(s), {summary.Failed} failed.");
 
-        foreach ((string archive, (int count, string directory)) in byArchive.OrderBy(static one => one.Key, StringComparer.OrdinalIgnoreCase))
+        foreach (ShaderSourceArchive archive in summary.Archives)
         {
-            table.Row(archive, count, directory);
+            table.Row(archive.Archive, archive.ShaderMaps, archive.OutputDirectory);
         }
         return table.Build();
     }

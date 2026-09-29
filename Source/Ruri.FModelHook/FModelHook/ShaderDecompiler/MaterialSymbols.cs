@@ -27,19 +27,14 @@ internal static class MaterialSymbols
 {
     private const int ParentChainLimit = 8;
 
-    public static MaterialSymbolSource? Of(ShaderMapInfo map)
+    public static MaterialSymbolSource? Of(string primaryAsset, string shaderPlatform, FUniformExpressionSet uniformExpressions, UMaterialInterface? material)
     {
-        if (map.UniformExpressions is not { } uniformExpressions)
-        {
-            return null;
-        }
-        SymbolInputs? inputs = SymbolInputsReader.ReadFromUniformExpressionSet(
-            map.PrimaryAsset, map.Target.ShaderPlatform, uniformExpressions);
+        SymbolInputs? inputs = SymbolInputsReader.ReadFromUniformExpressionSet(primaryAsset, shaderPlatform, uniformExpressions);
         if (inputs is null)
         {
             return null;
         }
-        AppendParameterCollections(inputs, map.Target.Material ?? map.Target.Owner);
+        AppendParameterCollections(inputs, material);
 
         SerializedProgramData built = MaterialSymbolMetadataBuilder.Build(inputs);
         foreach (string textureName in MaterialTextureOrder.Extract(uniformExpressions))
@@ -55,7 +50,7 @@ internal static class MaterialSymbols
             });
         }
         return new MaterialSymbolSource(
-            map.PrimaryAsset,
+            primaryAsset,
             built,
             inputs.UsedLoadedMaterialResources ? 2 : inputs.NumericParameterInfos.Count > 0 ? 1 : 0,
             inputs.UsedLoadedMaterialResources,

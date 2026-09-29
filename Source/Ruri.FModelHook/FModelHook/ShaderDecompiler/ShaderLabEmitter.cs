@@ -138,7 +138,7 @@ internal static class ShaderLabEmitter
             }
         }
 
-        OutputFile.Write(containerBasePath + ".shader", WriteContainerShaderFile(metadata, pooled, splittableStages));
+        state.Writer.Write(containerBasePath + ".shader", WriteContainerShaderFile(metadata, pooled, splittableStages));
     }
 
     /// <summary>
@@ -319,10 +319,10 @@ internal static class ShaderLabEmitter
             }
             if (!string.IsNullOrWhiteSpace(passPrograms[0].ShaderMapHash)) sb.AppendLine($"            // ShaderMapHash: {passPrograms[0].ShaderMapHash}");
 
-            bool anyGlsl = passPrograms.Any(p => string.Equals(p.SourceLanguage, "glsl", StringComparison.OrdinalIgnoreCase));
-            sb.AppendLine(anyGlsl ? "            GLSLPROGRAM" : "            HLSLPROGRAM");
+            bool allGlsl = passPrograms.All(static p => IsGlsl(p));
+            sb.AppendLine(allGlsl ? "            GLSLPROGRAM" : "            HLSLPROGRAM");
 
-            if (!anyGlsl)
+            if (!allGlsl)
             {
                 sb.AppendLine("            #pragma target 5.0");
                 sb.AppendLine("            #pragma use_dxc");
@@ -360,7 +360,7 @@ internal static class ShaderLabEmitter
                 }
 
                 EmitStageVariants(sb, stagePrograms, pooled,
-                    splitInclude: splittableStages.Contains(stageGroup.Key), metadata.MaterialTextureOrder);
+                    splitInclude: splittableStages.Contains(stageGroup.Key), metadata.MaterialTextureOrder, allGlsl);
 
                 if (stageMacro != null)
                 {
@@ -368,7 +368,7 @@ internal static class ShaderLabEmitter
                 }
                 sb.AppendLine();
             }
-            sb.AppendLine(anyGlsl ? "            ENDGLSL" : "            ENDHLSL");
+            sb.AppendLine(allGlsl ? "            ENDGLSL" : "            ENDHLSL");
             sb.AppendLine("        }");
         }
         sb.AppendLine("    }");
@@ -425,11 +425,11 @@ internal static class ShaderLabEmitter
     /// inline means.
     /// </summary>
     private static void EmitStageVariants(StringBuilder sb, List<UeShaderLabProgramData> stagePrograms,
-        IReadOnlyDictionary<UeShaderLabProgramData, string> pooled, bool splitInclude, IReadOnlyList<string> materialTextureOrder)
+        IReadOnlyDictionary<UeShaderLabProgramData, string> pooled, bool splitInclude, IReadOnlyList<string> materialTextureOrder, bool blockIsGlsl)
     {
         if (stagePrograms.Count == 1)
         {
-            EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, materialTextureOrder);
+            EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, materialTextureOrder, blockIsGlsl);
             return;
         }
 
@@ -437,7 +437,7 @@ internal static class ShaderLabEmitter
         {
             sb.AppendLine($"            // Note: {stagePrograms.Count - 1} further variant(s) of this stage were not emitted."
                           + " Ask for split variants to get each as its own file.");
-            EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, materialTextureOrder);
+            EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, materialTextureOrder, blockIsGlsl);
             return;
         }
 
@@ -445,15 +445,28 @@ internal static class ShaderLabEmitter
         for (int i = 0; i < stagePrograms.Count; i++)
         {
             sb.AppendLine($"            #{(i == 0 ? "if" : "elif")} defined({VariantSelectKeyword(stagePrograms[i])})");
-            EmitProgramBlock(sb, stagePrograms[i], pooled, splitInclude, materialTextureOrder);
+            EmitProgramBlock(sb, stagePrograms[i], pooled, splitInclude, materialTextureOrder, blockIsGlsl);
         }
         sb.AppendLine("            #else");
-        EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, materialTextureOrder);
+        EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, materialTextureOrder, blockIsGlsl);
         sb.AppendLine("            #endif");
     }
 
-    private static void EmitProgramBlock(StringBuilder sb, UeShaderLabProgramData program, IReadOnlyDictionary<UeShaderLabProgramData, string> pooled, bool splitInclude, IReadOnlyList<string> materialTextureOrder)
+    /// <summary>
+    /// Whether a program's source is GLSL. The block a pass is written in is GLSL only when every
+    /// program of it is: a map can hold both -- tessellation stages have no HLSL spelling in the
+    /// backend while the vertex and pixel stages beside them do -- and ShaderLab has one block
+    /// per pass, so a program whose language is not the block's says so where it stands.
+    /// </summary>
+    private static bool IsGlsl(UeShaderLabProgramData program)
+        => string.Equals(program.SourceLanguage, "glsl", StringComparison.OrdinalIgnoreCase);
+
+    private static void EmitProgramBlock(StringBuilder sb, UeShaderLabProgramData program, IReadOnlyDictionary<UeShaderLabProgramData, string> pooled, bool splitInclude, IReadOnlyList<string> materialTextureOrder, bool blockIsGlsl)
     {
+        if (IsGlsl(program) != blockIsGlsl)
+        {
+            sb.AppendLine($"            // Language: {program.SourceLanguage.ToUpperInvariant()}");
+        }
         if (splitInclude)
         {
             sb.AppendLine($"            #include \"{pooled[program]}\"");

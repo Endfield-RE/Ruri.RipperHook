@@ -11,28 +11,17 @@ namespace Ruri.FModelHook.ShaderDecompiler;
 /// </summary>
 internal static class ShaderLabProperties
 {
-    public static void Build(ShaderSourceState state)
+    /// <summary>The map's properties block and the order its textures bind in; whether it states any property at all.</summary>
+    public static bool Read(ShaderMapInfo map, FUniformExpressionSet uniformExpressions)
     {
-        int populated = 0;
-        foreach (ShaderMapInfo map in state.ShaderMaps)
+        string block = BuildBlock(uniformExpressions);
+        if (!string.IsNullOrEmpty(block))
         {
-            if (map.UniformExpressions is not { } uniformExpressions)
-            {
-                continue;
-            }
-
-            string block = BuildBlock(uniformExpressions);
-            if (!string.IsNullOrEmpty(block))
-            {
-                map.PropertiesBlock = block;
-                populated++;
-            }
-
-            map.MaterialTextureOrder = new List<string>(MaterialTextureOrder.Extract(uniformExpressions, out List<int> textureBuckets));
-            map.MaterialTextureBuckets = textureBuckets;
+            map.PropertiesBlock = block;
         }
-
-        state.Log($"    Properties: populated {populated}/{state.ShaderMaps.Count} shader-maps.");
+        map.MaterialTextureOrder = new List<string>(MaterialTextureOrder.Extract(uniformExpressions, out List<int> textureBuckets));
+        map.MaterialTextureBuckets = textureBuckets;
+        return !string.IsNullOrEmpty(block);
     }
 
     private static string BuildBlock(FUniformExpressionSet uniformExpressions)

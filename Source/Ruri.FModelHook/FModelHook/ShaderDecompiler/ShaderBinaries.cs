@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using CUE4Parse.UE4.Assets.Exports.Material;
+using Ruri.RipperHook.BlenderBridge.Data;
 using Ruri.ShaderTools;
 using EngineDecompileOptions = Ruri.ShaderTools.DecompileOptions;
 
@@ -14,9 +15,9 @@ internal static class ShaderBinaries
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> s_unknownShaderTypeHashes = new(StringComparer.Ordinal);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> s_unmatchedClassNames = new(StringComparer.Ordinal);
 
-    private static void ReconcileMaterialTextureBindings(ShaderSourceState state, int shaderIndex, SerializedProgramData metadata)
+    private static void ReconcileMaterialTextureBindings(ShaderSourceState state, int shaderIndex, FShaderParameterMapInfo? pmi, SerializedProgramData metadata)
     {
-        bool hasPmi = state.ShaderParameterMapInfoByArchiveIndex.TryGetValue(shaderIndex, out FShaderParameterMapInfo? pmi);
+        bool hasPmi = pmi is not null;
         if (s_textureBindDiagLogged.Count < 12 && s_textureBindDiagLogged.TryAdd(shaderIndex.ToString(), true))
         {
             string props = hasPmi
@@ -130,20 +131,27 @@ internal static class ShaderBinaries
         };
     }
 
+    /// <summary>How often a long archive states how far its stream has got.</summary>
+    private const int ProgressEveryMaps = 2048;
+
     /// <summary>
     /// Every shader the archive's maps name, prepared in the order the maps name them and
     /// handed on the moment it is ready, so the decompiler starts on the first while the rest
     /// are still being read.
     ///
-    /// A shader is prepared with the symbols of the first map that prepares it. One that a map
-    /// cannot prepare is tried again at the next map naming it, and only when the last map
-    /// naming it has failed too is it told to the schedule as settled without a result.
+    /// A map's facts are read from its first namer when its turn comes -- a unit of namers at a
+    /// time, let go before the next -- and a shader is prepared with the facts of the first map
+    /// that prepares it. One that a map cannot prepare is tried again at the next map naming it,
+    /// and only when the last map naming it has failed too is it told to the schedule as settled
+    /// without a result.
     /// </summary>
     public static IEnumerable<PreparedShader> Prepare(ShaderSourceState state, ShaderEmissionSchedule schedule)
     {
         s_seedHitsByClass.Clear();
         s_unknownShaderTypeHashes.Clear();
         s_unmatchedClassNames.Clear();
+        s_textureBindMismatchLogged.Clear();
+        s_textureBindDiagLogged.Clear();
 
         Directory.CreateDirectory(state.OutputDirectory);
 
@@ -151,42 +159,59 @@ internal static class ShaderBinaries
         HashSet<int> prepared = new();
         List<int> missed = new();
         int wanted = 0;
-        for (int map = 0; map < state.ShaderMaps.Count; map++)
+        int withProperties = 0;
+        int withRenderState = 0;
+        Stopwatch clock = Stopwatch.StartNew();
+        List<ShaderMapInfo> maps = state.ShaderMaps;
+        for (int start = 0; start < maps.Count; start += ShaderMapIndex.NamersPerUnit)
         {
-            ShaderMapInfo info = state.ShaderMaps[map];
-            MaterialSymbolSource? symbols = MaterialSymbols.Of(info);
-            if (symbols is null && info.UniformExpressions is not null)
+            int end = Math.Min(maps.Count, start + ShaderMapIndex.NamersPerUnit);
+            using (DataUnit.Begin())
             {
-                state.LogError($"Shader map {info.ShaderMapHash} ({info.PrimaryAsset}) states an expression set but no symbols came of it - material CB will be unnamed.");
-            }
-            missed.Clear();
-            foreach (ShaderMapMember member in info.Members)
-            {
-                int i = member.ArchiveShaderIndex;
-                if (prepared.Contains(i)) continue;
-                wanted++;
-                PreparedShader? shader = TryPrepare(state, lib, i, symbols);
-                if (shader is null)
+                for (int map = start; map < end; map++)
                 {
-                    missed.Add(i);
-                    continue;
-                }
-                prepared.Add(i);
-                state.ShaderPrepByIndex[i] = shader.Value.Prep;
-                yield return shader.Value;
-            }
-            foreach (int i in missed)
-            {
-                if (!prepared.Contains(i))
-                {
-                    schedule.NotPrepared(i, map);
+                    ShaderMapInfo info = maps[map];
+                    ShaderMapFacts.Reading reading = ShaderMapFacts.Read(state, info);
+                    withProperties += reading.Properties ? 1 : 0;
+                    withRenderState += reading.RenderState ? 1 : 0;
+                    schedule.FactsRead(map);
+                    missed.Clear();
+                    foreach (ShaderMapMember member in info.Members)
+                    {
+                        int i = member.ArchiveShaderIndex;
+                        if (prepared.Contains(i)) continue;
+                        wanted++;
+                        PreparedShader? shader = TryPrepare(state, lib, info, i);
+                        if (shader is null)
+                        {
+                            missed.Add(i);
+                            continue;
+                        }
+                        prepared.Add(i);
+                        state.ShaderPrepByIndex[i] = shader.Value.Prep;
+                        yield return shader.Value;
+                    }
+                    foreach (int i in missed)
+                    {
+                        if (!prepared.Contains(i))
+                        {
+                            schedule.NotPrepared(i, map);
+                        }
+                    }
+                    if (maps.Count > ProgressEveryMaps && (map + 1) % ProgressEveryMaps == 0)
+                    {
+                        state.Log($"[ShaderSource] {state.ArchiveName}: read {map + 1}/{maps.Count} map(s), {schedule.Written} written, "
+                            + $"{prepared.Count} shader(s) prepared, {clock.Elapsed.TotalSeconds:F0} s.");
+                    }
                 }
             }
         }
 
+        state.Log($"    Properties: populated {withProperties}/{maps.Count} shader-maps.");
+        state.Log($"    RenderState: populated {withRenderState}/{maps.Count} shader-maps.");
         state.Log($"    PrepareShaderBinaries: prepped {prepared.Count}/{wanted} binaries.");
 
-        if (state.ShaderTypeSeedRegistry.HashToNameCount > 0)
+        if (state.Metadata.ShaderTypes.HashToNameCount > 0)
         {
             int unknown = s_unknownShaderTypeHashes.Count;
             int unmatched = s_unmatchedClassNames.Count;
@@ -208,7 +233,7 @@ internal static class ShaderBinaries
     }
 
     /// <summary>One shader prepared, or null when its code could not be read or its preparation threw.</summary>
-    private static PreparedShader? TryPrepare(ShaderSourceState state, ShaderLibrary lib, int shaderIndex, MaterialSymbolSource? symbols)
+    private static PreparedShader? TryPrepare(ShaderSourceState state, ShaderLibrary lib, ShaderMapInfo map, int shaderIndex)
     {
         byte[]? raw = lib.GetShaderCode(shaderIndex);
         if (raw == null)
@@ -218,7 +243,7 @@ internal static class ShaderBinaries
         }
         try
         {
-            return PrepareSingleShader(state, shaderIndex, raw, symbols);
+            return PrepareSingleShader(state, map, shaderIndex, raw);
         }
         catch (Exception ex)
         {
@@ -228,17 +253,12 @@ internal static class ShaderBinaries
         }
     }
 
-    private static PreparedShader PrepareSingleShader(ShaderSourceState state, int shaderIndex, byte[] raw, MaterialSymbolSource? symbols)
+    private static PreparedShader PrepareSingleShader(ShaderSourceState state, ShaderMapInfo map, int shaderIndex, byte[] raw)
     {
-        ShaderContainerInfo? container = state.ContainerByShaderIndex.TryGetValue(shaderIndex, out ShaderContainerInfo? mappedContainer)
-            ? mappedContainer
-            : null;
-        string containerKey = container?.ContainerKey ?? $"Ungrouped_{shaderIndex:D6}";
-        string materialName = SanitizeFileStem(container?.MaterialName ?? ResolveFinalName(state, shaderIndex));
-        string variantSuffix = BuildVariantSuffix(shaderIndex, container);
-
-        string provisionalStem = $"{containerKey}_{materialName}_{variantSuffix}";
-        string failureDumpDir = Path.Combine(state.FailuresRoot, provisionalStem);
+        ShaderContainerInfo? container = map.ContainerByShaderIndex.GetValueOrDefault(shaderIndex);
+        FShaderParameterMapInfo? parameterMap = map.ParameterMapByShaderIndex.GetValueOrDefault(shaderIndex);
+        MaterialSymbolSource? symbols = map.Symbols;
+        ShaderTypeSeedRegistry shaderTypes = state.Metadata.ShaderTypes;
 
         byte[] strippedCode = UnrealShaderParser.Parse(raw, out ShaderBinaryFormat detectedFormat, out UnrealShaderParser.UnrealMetadata? unrealMetadata);
 
@@ -247,20 +267,20 @@ internal static class ShaderBinaries
             Metadata = Clone(symbols.Metadata),
         };
 
-        SerializedProgramData metadata = SubProgramMetadataReader.Read(unrealMetadata, bestSource, state.EngineUbRegistry, state.Log);
+        SerializedProgramData metadata = SubProgramMetadataReader.Read(unrealMetadata, bestSource, state.Metadata.UniformBuffers, state.Log);
 
         if (container != null
             && !string.IsNullOrWhiteSpace(container.ShaderTypeHash)
-            && state.ShaderTypeSeedRegistry.HashToNameCount > 0)
+            && shaderTypes.HashToNameCount > 0)
         {
-            string? resolvedName = state.ShaderTypeSeedRegistry.ResolveTypeName(container.ShaderTypeHash);
+            string? resolvedName = shaderTypes.ResolveTypeName(container.ShaderTypeHash);
             if (resolvedName == null)
             {
                 s_unknownShaderTypeHashes.TryAdd(container.ShaderTypeHash, true);
             }
             else
             {
-                if (state.ShaderTypeSeedRegistry.TryLookupWithFallback(
+                if (shaderTypes.TryLookupWithFallback(
                         container.ShaderTypeHash, container.ShaderTypeName,
                         out EngineUbMetadata _, out string _))
                 {
@@ -274,8 +294,8 @@ internal static class ShaderBinaries
 
         if (container != null
             && !string.IsNullOrWhiteSpace(container.ShaderTypeHash)
-            && state.ShaderTypeSeedRegistry.FileCount > 0
-            && state.ShaderTypeSeedRegistry.TryLookupWithFallback(
+            && shaderTypes.FileCount > 0
+            && shaderTypes.TryLookupWithFallback(
                 container.ShaderTypeHash, container.ShaderTypeName,
                 out EngineUbMetadata typeSeed, out string matchKind))
         {
@@ -291,9 +311,9 @@ internal static class ShaderBinaries
             if (typeSeed.ConstantBuffer != null
                 && typeSeed.ConstantBuffer.VectorParameters != null
                 && typeSeed.ConstantBuffer.VectorParameters.Length > 0
-                && state.ShaderParameterMapInfoByArchiveIndex.TryGetValue(shaderIndex, out FShaderParameterMapInfo? pmi))
+                && parameterMap is not null)
             {
-                ConstantBufferParameter? globalsCb = TryReconcileGlobalsCB(typeSeed, pmi!);
+                ConstantBufferParameter? globalsCb = TryReconcileGlobalsCB(typeSeed, parameterMap);
                 if (globalsCb != null)
                 {
                     metadata.ConstantBufferParameters.Add(globalsCb);
@@ -301,7 +321,7 @@ internal static class ShaderBinaries
             }
         }
 
-        ReconcileMaterialTextureBindings(state, shaderIndex, metadata);
+        ReconcileMaterialTextureBindings(state, shaderIndex, parameterMap, metadata);
 
         uint perShaderModel = state.Request.ShaderModel;
         bool optionallyMarkedSm6 = unrealMetadata?.IsSm6Shader == true;
@@ -316,8 +336,6 @@ internal static class ShaderBinaries
             Symbols = metadata,
             ShaderModel = perShaderModel,
             SymbolEnricher = static (spv, symbols) => MaterialTextureNameInferrer.InferAndAppend(spv, symbols),
-            DebugDumpDirectory = state.Request.DumpFailures ? failureDumpDir : null,
-            DebugDumpStem = state.Request.DumpFailures ? (bestSource != null ? "with-symbols" : "no-symbols") : null,
         };
 
         return new PreparedShader(shaderIndex, strippedCode, engineOptions, new ShaderPrep
@@ -340,36 +358,4 @@ internal static class ShaderBinaries
         DebugName = source.DebugName,
         UsedMaterials = new List<string>(source.UsedMaterials),
     };
-
-    private static string ResolveFinalName(ShaderSourceState state, int shaderIndex)
-    {
-        if (state.NameByShaderIndex.TryGetValue(shaderIndex, out string? mapped) && !string.IsNullOrWhiteSpace(mapped))
-        {
-            return mapped;
-        }
-        if (state.UsageByShaderIndex.TryGetValue(shaderIndex, out HashSet<string>? materials) && materials.Count > 0)
-        {
-            string first = materials.OrderBy(static m => m, StringComparer.OrdinalIgnoreCase).First();
-            string fileName = Path.GetFileNameWithoutExtension(first);
-            if (!string.IsNullOrWhiteSpace(fileName)) return fileName;
-        }
-        return "Shader";
-    }
-
-    private static string BuildVariantSuffix(int shaderIndex, ShaderContainerInfo? container)
-    {
-        if (container == null)
-        {
-            return $"idx{shaderIndex:D6}";
-        }
-
-        string perm = container.PermutationId >= 0 ? $"perm{container.PermutationId}" : "permNA";
-        string res = container.ResourceIndex >= 0 ? $"res{container.ResourceIndex}" : "resNA";
-        return $"{perm}_{res}_idx{shaderIndex:D6}";
-    }
-
-    private static string SanitizeFileStem(string value)
-    {
-        return string.Join("_", value.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
-    }
 }
