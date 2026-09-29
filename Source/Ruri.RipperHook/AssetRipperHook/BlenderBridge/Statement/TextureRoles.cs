@@ -26,8 +26,11 @@ public sealed class TextureRoles
 
     public static readonly string[] ColorValueRoles = ["base_color", "emission"];
 
+    /// <summary>How a material composites is stated in one of two idioms: the built-in pipeline's one blend
+    /// mode, or the scriptable pipelines' surface type and alpha clip -- beside a cutoff either way.</summary>
     public static readonly string[] FloatValueRoles =
-        ["metallic", "roughness", "smoothness", "normal_strength", "alpha_cutoff", "blend_mode"];
+        ["metallic", "roughness", "smoothness", "normal_strength", "alpha_cutoff", "blend_mode", "surface_type",
+         "alpha_clip"];
 
     private readonly Dictionary<string, JsonObject> _textures = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _colors = new(StringComparer.Ordinal);
