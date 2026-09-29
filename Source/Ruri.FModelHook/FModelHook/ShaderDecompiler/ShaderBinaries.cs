@@ -163,12 +163,12 @@ internal static class ShaderBinaries
         int withRenderState = 0;
         Stopwatch clock = Stopwatch.StartNew();
         List<ShaderMapInfo> maps = state.ShaderMaps;
-        for (int start = 0; start < maps.Count; start += ShaderMapIndex.NamersPerUnit)
+        int map = 0;
+        while (map < maps.Count)
         {
-            int end = Math.Min(maps.Count, start + ShaderMapIndex.NamersPerUnit);
-            using (DataUnit.Begin())
+            using (DataUnit unit = DataUnit.Begin())
             {
-                for (int map = start; map < end; map++)
+                do
                 {
                     ShaderMapInfo info = maps[map];
                     ShaderMapFacts.Reading reading = ShaderMapFacts.Read(state, info);
@@ -203,7 +203,9 @@ internal static class ShaderBinaries
                         state.Log($"[ShaderSource] {state.ArchiveName}: read {map + 1}/{maps.Count} map(s), {schedule.Written} written, "
                             + $"{prepared.Count} shader(s) prepared, {clock.Elapsed.TotalSeconds:F0} s.");
                     }
+                    map++;
                 }
+                while (map < maps.Count && unit.Held < ShaderMapIndex.BytesPerUnit);
             }
         }
 

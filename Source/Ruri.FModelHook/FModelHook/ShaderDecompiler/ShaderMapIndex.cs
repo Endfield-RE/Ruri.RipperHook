@@ -21,12 +21,14 @@ namespace Ruri.FModelHook.ShaderDecompiler;
 internal sealed class ShaderMapIndex
 {
     /// <summary>
-    /// How many namers' packages one unit keeps together before letting them go. Materials that
+    /// How many bytes of packages one unit keeps together before letting them go. Materials that
     /// share a template sit next to each other in the order they are asked about, so the template
-    /// is read once per unit rather than once per material, and a unit is still a few hundred
-    /// packages however large the install.
+    /// is read once per unit rather than once per material. A unit ends on what it keeps, not on
+    /// how many namers it has read: a material package is a few hundred kilobytes and a
+    /// world-partition cell carrying one landscape material is megabytes, and a count sized for
+    /// the one held hundreds of the other together -- gigabytes at a time.
     /// </summary>
-    public const int NamersPerUnit = 256;
+    public const long BytesPerUnit = 256L << 20;
 
     /// <summary>How often a long index states how far it has got.</summary>
     private const int ProgressEverySubjects = 8192;
@@ -53,12 +55,14 @@ internal sealed class ShaderMapIndex
         Dictionary<string, IndexedArchive> byArchive = new(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<IShaderMapSubject> subjects = request.Subjects;
         int named = 0;
-        for (int start = 0; start < subjects.Count; start += NamersPerUnit)
+        int position = 0;
+        int units = 0;
+        while (position < subjects.Count)
         {
-            int end = Math.Min(subjects.Count, start + NamersPerUnit);
-            using (DataUnit.Begin())
+            units++;
+            using (DataUnit unit = DataUnit.Begin())
             {
-                for (int position = start; position < end; position++)
+                do
                 {
                     foreach (ShaderMapTarget target in subjects[position].Resolve(request.Provider, log, logError))
                     {
@@ -87,15 +91,17 @@ internal sealed class ShaderMapIndex
                         }
                         archive.Maps.Add(map);
                     }
+                    position++;
+                    if (subjects.Count > ProgressEverySubjects && position % ProgressEverySubjects == 0)
+                    {
+                        log($"[ShaderSource] indexed {position}/{subjects.Count} subject(s): {byHash.Count} distinct map(s) so far, {clock.Elapsed.TotalSeconds:F0} s.");
+                    }
                 }
-            }
-            if (subjects.Count > ProgressEverySubjects && end / ProgressEverySubjects != start / ProgressEverySubjects)
-            {
-                log($"[ShaderSource] indexed {end}/{subjects.Count} subject(s): {byHash.Count} distinct map(s) so far, {clock.Elapsed.TotalSeconds:F0} s.");
+                while (position < subjects.Count && unit.Held < BytesPerUnit);
             }
         }
         log($"[ShaderSource] {subjects.Count} subject(s) named {named} map(s), {byHash.Count} of them distinct, in {clock.ElapsedMilliseconds} ms "
-            + $"({catalog.OpenedArchiveCount} archive(s) open, {catalog.IndexedMapCount} maps indexed).");
+            + $"over {units} unit(s) ({catalog.OpenedArchiveCount} archive(s) open, {catalog.IndexedMapCount} maps indexed).");
         return new ShaderMapIndex(
             byArchive.Values.OrderBy(static archive => archive.Name, StringComparer.OrdinalIgnoreCase).ToList(),
             named,

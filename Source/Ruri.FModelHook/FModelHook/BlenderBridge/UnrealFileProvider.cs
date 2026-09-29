@@ -24,11 +24,13 @@ public sealed class UnrealFileProvider : DefaultFileProvider
 {
     private readonly Lazy<MaterialSemanticsResolver> semantics;
     private readonly Func<GameFile, IPackage> readAfresh;
+    private readonly Func<GameFile, long> weigh;
 
     public UnrealFileProvider(DirectoryInfo directory, DirectoryInfo[] extraDirectories, SearchOption searchOption, VersionContainer versions, StringComparer pathComparer)
         : base(directory, extraDirectories, searchOption, versions, pathComparer)
     {
         readAfresh = LoadUncached;
+        weigh = Weigh;
         semantics = new Lazy<MaterialSemanticsResolver>(
             () => new MaterialSemanticsResolver(this, message => Logger.Info(LogCategory.Import, message), message => Logger.Verbose(LogCategory.Import, message)),
             LazyThreadSafetyMode.ExecutionAndPublication);
@@ -41,12 +43,23 @@ public sealed class UnrealFileProvider : DefaultFileProvider
     {
         ArgumentNullException.ThrowIfNull(file);
         return DataUnit.Current is { } unit
-            ? unit.Keep(this, static () => new PackageInstances()).Load(file, readAfresh)
+            ? unit.Keep(this, static () => new PackageInstances()).Load(file, readAfresh, weigh, unit)
             : LoadUncached(file);
     }
 
     /// <summary>The package read afresh and kept by nobody, for a scan that only reads its header.</summary>
     public IPackage LoadUncached(GameFile file) => base.LoadPackage(file);
+
+    /// <summary>
+    /// What reading a package keeps for as long as the package is kept: its header and its
+    /// export data, each read whole. Its bulk data is read when an export asks for it and kept
+    /// by nobody.
+    /// </summary>
+    private long Weigh(GameFile file)
+    {
+        Files.FindPayloads(file, out GameFile? exportData, out _, out _);
+        return file.Size + (exportData?.Size ?? 0);
+    }
 
     public override void Dispose()
     {
@@ -62,9 +75,14 @@ public sealed class UnrealFileProvider : DefaultFileProvider
     {
         private readonly ConcurrentDictionary<string, Lazy<IPackage>> packages = new(StringComparer.OrdinalIgnoreCase);
 
-        public IPackage Load(GameFile file, Func<GameFile, IPackage> read)
+        public IPackage Load(GameFile file, Func<GameFile, IPackage> read, Func<GameFile, long> weigh, DataUnit unit)
         {
-            Lazy<IPackage> entry = packages.GetOrAdd(file.Path, _ => new Lazy<IPackage>(() => read(file), LazyThreadSafetyMode.ExecutionAndPublication));
+            Lazy<IPackage> entry = packages.GetOrAdd(file.Path, _ => new Lazy<IPackage>(() =>
+            {
+                IPackage package = read(file);
+                unit.Hold(weigh(file));
+                return package;
+            }, LazyThreadSafetyMode.ExecutionAndPublication));
             try
             {
                 return entry.Value;

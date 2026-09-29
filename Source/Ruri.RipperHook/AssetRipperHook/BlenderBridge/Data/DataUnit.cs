@@ -25,6 +25,7 @@ public sealed class DataUnit : IDisposable
 
     private readonly DataUnit? outer;
     private readonly ConcurrentDictionary<object, Lazy<IDisposable>> kept = new(ReferenceEqualityComparer.Instance);
+    private long held;
     private int ended;
 
     private DataUnit(DataUnit? outer)
@@ -42,6 +43,17 @@ public sealed class DataUnit : IDisposable
         Open.Value = unit;
         return unit;
     }
+
+    /// <summary>
+    /// How many bytes of what they read the readers of this unit keep for it. A job that walks
+    /// more than one unit's worth of work ends a unit on this rather than on a count of items:
+    /// items differ by orders of magnitude in what reading one keeps, and a count sized for
+    /// the small ones holds hundreds of the large ones together.
+    /// </summary>
+    public long Held => Interlocked.Read(ref held);
+
+    /// <summary>States that a reader keeps <paramref name="bytes"/> more for the length of this unit.</summary>
+    public void Hold(long bytes) => Interlocked.Add(ref held, bytes);
 
     /// <summary>What <paramref name="owner"/> keeps for the length of this unit, made the first time it asks.</summary>
     public T Keep<T>(object owner, Func<T> make) where T : class, IDisposable
