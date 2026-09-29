@@ -108,7 +108,11 @@ public static class Datasets
         {
             return (handle, cached);
         }
-        ColumnTable table = dataset.Table(new DataRequest(dataset, values, cancellation, map));
+        ColumnTable table;
+        using (DataUnit? unit = DataUnit.Current is null ? DataUnit.Begin() : null)
+        {
+            table = dataset.Table(new DataRequest(dataset, values, cancellation, map));
+        }
         Cache[handle] = table;
         TableRegistry.Register(handle, table);
         return (handle, table);
@@ -122,6 +126,7 @@ public static class Datasets
         {
             throw new InvalidOperationException($"dataset '{id}' is a table, not a blob -- ask for it with Table().");
         }
+        using DataUnit? unit = DataUnit.Current is null ? DataUnit.Begin() : null;
         return dataset.Blob(new DataRequest(dataset, values, cancellation, map, payload));
     }
 

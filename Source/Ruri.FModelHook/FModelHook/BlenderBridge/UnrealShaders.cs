@@ -95,10 +95,12 @@ public static class UnrealShaders
     /// <summary>
     /// How many materials one run answers about at a time when the question is a whole install.
     ///
-    /// A run holds the decompiled source of every shader it touched until it has written it, and
-    /// an install's worth of that is tens of gigabytes. Answering in passes bounds that to one
-    /// pass's worth; the maps already written are what a later pass skips, so the passes together
-    /// answer exactly what one big pass would have.
+    /// A run resolves every material it is asked about before it writes anything -- the package,
+    /// its compiled maps and the expression set each shader is named from -- and holds them until
+    /// its last archive is written; the shaders themselves stream through and are let go map by
+    /// map. An install's materials held that way are more than memory, so a whole install is
+    /// asked in passes of this many, each its own <see cref="DataUnit"/> so it lets go of the
+    /// packages the pass before it read, and the maps already written are what a later pass skips.
     /// </summary>
     private const int MaterialsPerPass = 250;
 
@@ -147,16 +149,20 @@ public static class UnrealShaders
         for (int start = 0; start < packages.Length; start += Math.Max(1, passSize))
         {
             string[] pass = packages[start..Math.Min(packages.Length, start + Math.Max(1, passSize))];
-            ShaderSourceSummary summary = ShaderSourceRun.Execute(new ShaderSourceRequest
+            ShaderSourceSummary summary;
+            using (DataUnit.Begin())
             {
-                Provider = provider,
-                Subjects = Array.ConvertAll(pass, static path => (IShaderMapSubject)new PackageSubject(path)),
-                OutputDirectory = output,
-                SplitVariantsToHlslFiles = true,
-                ResumeFromOutput = resumeFromOutput,
-                Log = Say,
-                LogError = Complain,
-            });
+                summary = ShaderSourceRun.Execute(new ShaderSourceRequest
+                {
+                    Provider = provider,
+                    Subjects = Array.ConvertAll(pass, static path => (IShaderMapSubject)new PackageSubject(path)),
+                    OutputDirectory = output,
+                    SplitVariantsToHlslFiles = true,
+                    ResumeFromOutput = resumeFromOutput,
+                    Log = Say,
+                    LogError = Complain,
+                });
+            }
             maps += summary.ShaderMaps;
             decompiled += summary.Decompiled;
             failed += summary.Failed;
