@@ -592,25 +592,15 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
     private static void DecompileAndWritePasses(IShader shader, List<ShaderSymbolPass> symbols, UnityShaderMetadata unityMetadata, string outputPath)
     {
-        string failuresRoot = outputPath + ".failures";
         int total = symbols.Count;
         var passStems = new string[total];
         var requests = new (byte[] Binary, DecompileOptions Options)[total];
-
-        string? dumpInputDir = Environment.GetEnvironmentVariable("RURI_DUMP_INPUT_DIR");
 
         for (int i = 0; i < total; i++)
         {
             ShaderSymbolPass pass = symbols[i];
             string passStem = $"sub{pass.Read.SubShaderIndex}.pass{pass.Read.PassIndex}.{pass.Read.Stage.ToLowerInvariant()}.blob{pass.Read.BlobIndex}.{SanitizeFileName(pass.Read.PassName)}";
             passStems[i] = passStem;
-
-            if (!string.IsNullOrEmpty(dumpInputDir))
-            {
-                Directory.CreateDirectory(dumpInputDir);
-                string safeShader = SanitizeFileName(shader.Name);
-                File.WriteAllBytes(Path.Combine(dumpInputDir, $"{safeShader}.{passStem}.input.bin"), pass.Read.Binary);
-            }
 
             requests[i] = (pass.Read.Binary, new DecompileOptions
             {
@@ -619,8 +609,6 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
                 UnityMetadata = unityMetadata,
                 ShaderModel = 51,
                 VertexInputs = VertexInputsOf(pass.Read),
-                DebugDumpDirectory = Path.Combine(failuresRoot, passStem),
-                DebugDumpStem = "with-symbols",
             });
         }
 
@@ -636,7 +624,6 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             {
                 Console.Error.WriteLine($"[ShaderDecompile] RURI_STRICT_SHADER_EXPORT: aborting on first failure  E{shader.Name} {passStems[idx]}");
                 Console.Error.WriteLine(r.ErrorMessage);
-                Console.Error.WriteLine($"Debug dump: {Path.Combine(failuresRoot, passStems[idx])}");
                 Environment.Exit(1);
             }
         });
