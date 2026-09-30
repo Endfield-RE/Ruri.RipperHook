@@ -164,6 +164,25 @@ internal sealed class ShaderMapInfo
     public string PassCommands { get; set; } = string.Empty;
 
     /// <summary>
+    /// Lets go of what the map's first namer stated about it, once the map is written. Those facts
+    /// are read when the map's turn comes and used to prepare the shaders it is first to name and
+    /// to write it; nothing reads them after. Held until the archive's stream ended, they were
+    /// every map's identities, parameter maps and symbols at once -- gigabytes on an archive of
+    /// tens of thousands of maps.
+    /// </summary>
+    public void LetGoOfFacts()
+    {
+        ContainerByShaderIndex = new();
+        ParameterMapByShaderIndex = new();
+        Symbols = null;
+        PropertiesBlock = string.Empty;
+        MaterialTextureOrder = new();
+        MaterialTextureBuckets = new();
+        SubShaderTags = string.Empty;
+        PassCommands = string.Empty;
+    }
+
+    /// <summary>
     /// One indexed map as its archive's stream starts it: named after the asset that named it
     /// first, the shaders it owns being its run of the archive's shared index list.
     /// </summary>

@@ -126,7 +126,9 @@ internal sealed class ShaderEmissionSchedule
 
     private void Write(int map)
     {
-        ShaderLabEmitter.Emit(state, state.ShaderMaps[map]);
+        ShaderMapInfo info = state.ShaderMaps[map];
+        ShaderLabEmitter.Emit(state, info);
+        info.LetGoOfFacts();
         Interlocked.Increment(ref written);
         foreach (int shader in shadersByMap[map])
         {

@@ -75,11 +75,6 @@ internal static class ShaderLabEmitter
             };
         }
 
-        if (result.FinalSymbols != null)
-        {
-            result.FinalSymbols.UsedMaterials = new List<string>(map.Assets);
-        }
-
         System.Threading.Interlocked.Increment(ref state.Decompiled);
         return new ContainerOutputEntry
         {
