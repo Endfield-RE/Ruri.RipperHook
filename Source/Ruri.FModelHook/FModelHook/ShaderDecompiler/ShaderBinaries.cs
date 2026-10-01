@@ -15,50 +15,6 @@ internal static class ShaderBinaries
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> s_unknownShaderTypeHashes = new(StringComparer.Ordinal);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> s_unmatchedClassNames = new(StringComparer.Ordinal);
 
-    private static void ReconcileMaterialTextureBindings(ShaderSourceState state, int shaderIndex, FShaderParameterMapInfo? pmi, SerializedProgramData metadata)
-    {
-        bool hasPmi = pmi is not null;
-        if (s_textureBindDiagLogged.Count < 12 && s_textureBindDiagLogged.TryAdd(shaderIndex.ToString(), true))
-        {
-            string props = hasPmi
-                ? $"UniformBuffers[{pmi!.UniformBuffers?.Length ?? -1}],TextureSamplers[{pmi.TextureSamplers?.Length ?? -1}],SRVs[{pmi.SRVs?.Length ?? -1}],LooseParameterBuffers[{pmi.LooseParameterBuffers?.Length ?? -1}]"
-                : "(none)";
-            state.Log($"    [texbind-diag] shader={shaderIndex} uesTextures={metadata.TextureParameters.Count} pmi={hasPmi} props={props}");
-        }
-        if (metadata.TextureParameters.Count == 0) return;
-        if (!hasPmi) return;
-
-        var slots = new List<int>();
-        foreach (FShaderParameterInfo[]? bindings in new[] { pmi!.TextureSamplers, pmi.SRVs })
-        {
-            foreach (FShaderParameterInfo entry in bindings ?? [])
-            {
-                if (entry is FShaderResourceParameterInfo { Type: EShaderParameterType.Sampler or EShaderParameterType.BindlessSampler }) continue;
-                int slot = entry.BaseIndex;
-                if (!slots.Contains(slot)) slots.Add(slot);
-            }
-        }
-        if (slots.Count == 0) return;
-        slots.Sort();
-
-        if (slots.Count != metadata.TextureParameters.Count)
-        {
-            if (s_textureBindMismatchLogged.TryAdd(metadata.DebugName ?? shaderIndex.ToString(), true))
-            {
-                state.Log($"    [texbind] {metadata.DebugName}: UES 贴图 {metadata.TextureParameters.Count} 个 vs cook 资源槽 {slots.Count} 个 — 数量不等,保持匿名(拒绝按位错标)。");
-            }
-            return;
-        }
-
-        for (int i = 0; i < slots.Count; i++)
-        {
-            metadata.TextureParameters[i].Index = slots[i];
-        }
-    }
-
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> s_textureBindMismatchLogged = new();
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> s_textureBindDiagLogged = new();
-
     private static ConstantBufferParameter? TryReconcileGlobalsCB(EngineUbMetadata seed, FShaderParameterMapInfo parameterMapInfo)
     {
         if (parameterMapInfo.LooseParameterBuffers is not { Length: > 0 } loose)
@@ -150,8 +106,6 @@ internal static class ShaderBinaries
         s_seedHitsByClass.Clear();
         s_unknownShaderTypeHashes.Clear();
         s_unmatchedClassNames.Clear();
-        s_textureBindMismatchLogged.Clear();
-        s_textureBindDiagLogged.Clear();
 
         Directory.CreateDirectory(state.OutputDirectory);
 
@@ -275,7 +229,8 @@ internal static class ShaderBinaries
         MaterialSymbolSource? symbols = map.Symbols;
         ShaderTypeSeedRegistry shaderTypes = state.Metadata.ShaderTypes;
 
-        byte[] strippedCode = UnrealShaderParser.Parse(raw, out ShaderBinaryFormat detectedFormat, out UnrealShaderParser.UnrealMetadata? unrealMetadata);
+        byte[] strippedCode = UnrealShaderParser.Parse(raw, state.Request.Provider.Versions.Game,
+            out ShaderBinaryFormat detectedFormat, out UnrealShaderParser.UnrealMetadata? unrealMetadata);
 
         MaterialSymbolSource? bestSource = symbols is null ? null : symbols with
         {
@@ -336,8 +291,6 @@ internal static class ShaderBinaries
             }
         }
 
-        ReconcileMaterialTextureBindings(state, shaderIndex, parameterMap, metadata);
-
         uint perShaderModel = state.Request.ShaderModel;
         bool optionallyMarkedSm6 = unrealMetadata?.IsSm6Shader == true;
         if (optionallyMarkedSm6 || detectedFormat == ShaderBinaryFormat.Dxil)
@@ -350,7 +303,6 @@ internal static class ShaderBinaries
             Format = detectedFormat,
             Symbols = metadata,
             ShaderModel = perShaderModel,
-            SymbolEnricher = static (spv, symbols) => MaterialTextureNameInferrer.InferAndAppend(spv, symbols),
         };
 
         return new PreparedShader(shaderIndex, strippedCode, engineOptions, new ShaderPrep

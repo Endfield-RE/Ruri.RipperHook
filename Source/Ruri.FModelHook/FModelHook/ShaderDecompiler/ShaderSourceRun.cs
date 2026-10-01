@@ -76,6 +76,11 @@ public static class ShaderSourceRun
                     + $"{state.Variants.Written} variant file(s) new and {state.Variants.Shared} shared, read {library.BytesRead / (1024 * 1024)} MB of the archive's {library.Size / (1024 * 1024)} MB, "
                     + $"in {stopwatch.ElapsedMilliseconds} ms -> {outputDirectory}");
 
+                if (state.NameCollisions > 0)
+                {
+                    log($"[ShaderSource] {archive.Name}: {state.NameCollisions} binding(s) would have shared a name and "
+                        + "were left as the decompiler wrote them.");
+                }
                 archives.Add(new ShaderSourceArchive(archive.Name, state.ShaderMaps.Count, state.Decompiled, outputDirectory));
                 maps += state.ShaderMaps.Count;
                 decompiled += state.Decompiled;

@@ -11,7 +11,7 @@ namespace Ruri.FModelHook.ShaderDecompiler;
 /// </summary>
 internal static class ShaderLabProperties
 {
-    /// <summary>The map's properties block and the order its textures bind in; whether it states any property at all.</summary>
+    /// <summary>The map's properties block; whether it states any property at all.</summary>
     public static bool Read(ShaderMapInfo map, FUniformExpressionSet uniformExpressions)
     {
         string block = BuildBlock(uniformExpressions);
@@ -19,8 +19,6 @@ internal static class ShaderLabProperties
         {
             map.PropertiesBlock = block;
         }
-        map.MaterialTextureOrder = new List<string>(MaterialTextureOrder.Extract(uniformExpressions, out List<int> textureBuckets));
-        map.MaterialTextureBuckets = textureBuckets;
         return !string.IsNullOrEmpty(block);
     }
 

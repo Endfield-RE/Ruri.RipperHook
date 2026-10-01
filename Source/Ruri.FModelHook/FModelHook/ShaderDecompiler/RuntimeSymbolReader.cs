@@ -148,6 +148,7 @@ internal static class ShaderResourceTableDecoder
             return result;
         }
 
+        DecodeMap(srt.TextureMap, srt.ResourceTableBits, SrtRegisterType.Texture, uniformBufferNames, result);
         DecodeMap(srt.ShaderResourceViewMap, srt.ResourceTableBits, SrtRegisterType.ShaderResourceView, uniformBufferNames, result);
         DecodeMap(srt.SamplerMap, srt.ResourceTableBits, SrtRegisterType.Sampler, uniformBufferNames, result);
         DecodeMap(srt.UnorderedAccessViewMap, srt.ResourceTableBits, SrtRegisterType.UnorderedAccessView, uniformBufferNames, result);
@@ -267,7 +268,31 @@ internal static class ShaderResourceTableSymbolizer
                     break;
             }
         }
+        PairOwnSamplers(target);
+    }
 
+    /// <summary>
+    /// Each texture's own sampler: the member the uniform buffer declares beside it under its name and
+    /// "Sampler" -- the material buffer's recipe names both from one parameter, and engine buffers declare
+    /// theirs the same way. A texture read through a shared sampler binds no sampler of its own and keeps none.
+    /// </summary>
+    private static void PairOwnSamplers(SerializedProgramData target)
+    {
+        Dictionary<string, int> samplerByName = new(StringComparer.Ordinal);
+        foreach (SamplerParameter sampler in target.SamplerParameters)
+        {
+            if (!string.IsNullOrWhiteSpace(sampler.Name))
+            {
+                samplerByName.TryAdd(sampler.Name!, sampler.BindPoint);
+            }
+        }
+        foreach (TextureParameter texture in target.TextureParameters)
+        {
+            if (!string.IsNullOrWhiteSpace(texture.Name) && samplerByName.TryGetValue(texture.Name + "Sampler", out int binding))
+            {
+                texture.SamplerIndex = binding;
+            }
+        }
     }
 
     private static void DumpSrt(FShaderResourceTable srt, IReadOnlyList<string>? uniformBufferNames)
@@ -283,7 +308,8 @@ internal static class ShaderResourceTableSymbolizer
                 Console.Error.WriteLine($"[SRT] UB[{i}] = {uniformBufferNames[i]} (used={used}, layoutHash=0x{hash:X8})");
             }
         }
-        DumpMap("SRV/Texture", srt.ShaderResourceViewMap);
+        DumpMap("Texture", srt.TextureMap);
+        DumpMap("SRV", srt.ShaderResourceViewMap);
         DumpMap("Sampler", srt.SamplerMap);
         DumpMap("UAV", srt.UnorderedAccessViewMap);
         DumpMap("LayoutHashes", srt.ResourceTableLayoutHashes);

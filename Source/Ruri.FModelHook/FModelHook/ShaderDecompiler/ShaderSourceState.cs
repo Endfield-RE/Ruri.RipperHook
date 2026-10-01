@@ -117,6 +117,9 @@ internal sealed class ShaderSourceState
     public int Decompiled;
     public int Skipped;
     public int Failed;
+
+    /// <summary>Bindings left as the decompiler wrote them because two would have come out under one name.</summary>
+    public int NameCollisions;
 }
 
 internal sealed class ShaderContainerInfo
@@ -158,8 +161,6 @@ internal sealed class ShaderMapInfo
     public Dictionary<int, FShaderParameterMapInfo> ParameterMapByShaderIndex { get; set; } = new();
     public MaterialSymbolSource? Symbols { get; set; }
     public string PropertiesBlock { get; set; } = string.Empty;
-    public List<string> MaterialTextureOrder { get; set; } = new();
-    public List<int> MaterialTextureBuckets { get; set; } = new();
     public string SubShaderTags { get; set; } = string.Empty;
     public string PassCommands { get; set; } = string.Empty;
 
@@ -176,8 +177,6 @@ internal sealed class ShaderMapInfo
         ParameterMapByShaderIndex = new();
         Symbols = null;
         PropertiesBlock = string.Empty;
-        MaterialTextureOrder = new();
-        MaterialTextureBuckets = new();
         SubShaderTags = string.Empty;
         PassCommands = string.Empty;
     }

@@ -190,7 +190,8 @@ public sealed class MaterialSemanticsResolver : IDisposable
         {
             return MaterialSemantics.Unresolved(hash, $"shader {shaderIndex} has no code in the library");
         }
-        byte[] stripped = UnrealShaderParser.Parse(raw, out ShaderBinaryFormat format, out UnrealShaderParser.UnrealMetadata? runtimeMetadata);
+        byte[] stripped = UnrealShaderParser.Parse(raw, provider.Versions.Game, out ShaderBinaryFormat format,
+            out UnrealShaderParser.UnrealMetadata? runtimeMetadata);
         SymbolReading reading = Symbols(materialPath, entry.Platform, content, runtimeMetadata);
         byte[]? spirv = SpirvFrontend.TryConvert(stripped, out string? error);
         if (spirv is null)
