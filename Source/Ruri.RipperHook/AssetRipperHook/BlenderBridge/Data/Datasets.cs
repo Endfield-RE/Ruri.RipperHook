@@ -29,8 +29,15 @@ public static class Datasets
         public long Sequence { get; init; }
     }
 
+    /// <summary>
+    /// How many bytes of answers already made the session keeps to hand out again (see
+    /// <see cref="KeptAnswers"/>). Every roster, language and folder list a host draws fits many
+    /// times over; a selection's meshes do not, and are never kept.
+    /// </summary>
+    public const long KeptAnswerBytes = 64L << 20;
+
     private static readonly ConcurrentDictionary<string, Dataset> Registered = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly ConcurrentDictionary<string, ColumnTable> Cache = new(StringComparer.Ordinal);
+    private static readonly KeptAnswers Kept = new(KeptAnswerBytes);
     private static long published;
 
     public static void Publish(string id, DataRole role, DataParam[] parameters, string description,
@@ -85,7 +92,7 @@ public static class Datasets
 
     public static void ClearCache()
     {
-        Cache.Clear();
+        Kept.Clear();
         Statements.StatementDatasets.Forget();
     }
 
@@ -104,18 +111,27 @@ public static class Datasets
             throw new InvalidOperationException($"dataset '{id}' is a blob, not a table -- ask for it with Blob().");
         }
         string handle = HandleOf(id, values);
-        if (Cache.TryGetValue(handle, out ColumnTable? cached))
+        if (Kept.TryGet(handle, out ColumnTable? kept))
         {
-            return (handle, cached);
+            return (handle, kept);
         }
         ColumnTable table;
         using (DataUnit? unit = DataUnit.Current is null ? DataUnit.Begin() : null)
         {
             table = dataset.Table(new DataRequest(dataset, values, cancellation, map));
         }
-        Cache[handle] = table;
+        Kept.Offer(handle, table);
         TableRegistry.Register(handle, table);
         return (handle, table);
+    }
+
+    /// <summary>A request to the dataset <paramref name="id"/>, its arguments bound and checked
+    /// exactly as asking it would bind them -- for a verb that acts on what a request asked for
+    /// rather than asking it again.</summary>
+    public static DataRequest Request(string id, string[] namedArgs, CabTable? map = null)
+    {
+        (Dataset dataset, Dictionary<string, string[]> values) = Resolve(id, namedArgs);
+        return new DataRequest(dataset, values, CancellationToken.None, map);
     }
 
     public static byte[] Blob(string id, string[] namedArgs, CancellationToken cancellation = default,

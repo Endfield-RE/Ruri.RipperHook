@@ -1,3 +1,4 @@
+using System.Runtime;
 using AssetRipper.Import.Logging;
 using Ruri.Hook.Config;
 using Ruri.Hook.Core;
@@ -9,7 +10,8 @@ namespace Ruri.RipperHook.BlenderBridge;
 
 /// <summary>
 /// The kernel's face to a host: session control (which decoders exist, what an install is,
-/// opening the session, building and loading cabmaps, the install slots), and the four verbs
+/// opening the session, building and loading cabmaps, the install slots, letting a placed
+/// selection go), and the four verbs
 /// every question is asked through -- a dataset as a table, a dataset as bytes, a view over
 /// a table, and a search over one. Everything a selection IS arrives as a statement dataset
 /// (<see cref="Statements.StatementDatasets"/>); nothing else crosses.
@@ -218,6 +220,22 @@ public static class RipperBlenderBridge
     public static byte[] GameDataBlob(CabMapHandle? map, string datasetId, string[] args, byte[]? payload,
         CancellationToken cancellation) =>
         Data.Datasets.Blob(datasetId, args ?? [], cancellation, OptionalTableOf(map), payload ?? []);
+
+    /// <summary>
+    /// The host has placed the selection these statement arguments asked about and is done with
+    /// it: the flattening its tables were cut from is let go, and the memory handed back. A
+    /// collection the runtime schedules on its own sweeps the same garbage but keeps the heap it
+    /// grew committed for the next load, so the process the host runs in stays as large as its
+    /// largest load until something else asks for the memory; the aggressive, compacting one
+    /// returns it, once per load, when the host has nothing left to read.
+    /// </summary>
+    public static void ReleaseStatement(CabMapHandle? map, string[] args)
+    {
+        Statements.StatementDatasets.Release(
+            Data.Datasets.Request(Statements.StatementDatasets.RootsId, args ?? [], OptionalTableOf(map)));
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+    }
 
     public static byte[] SearchDataTable(string handle, string query, string[]? flatRules)
     {

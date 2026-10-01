@@ -148,8 +148,8 @@ public static class StatementDatasets
             throw new ArgumentException("a statement needs at least one seed.");
         }
         StatementOptions options = Options(request);
-        string mapIdentity = RuntimeHelpers.GetHashCode(map).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string asked = string.Join("\n", seeds) + "\n" + options.Signature + "\n" + mapIdentity;
+        string mapIdentity = MapIdentity(map);
+        string asked = Asked(seeds, options, map);
         lock (Gate)
         {
             if (_cached is not null && _cachedRequest == asked)
@@ -191,6 +191,35 @@ public static class StatementDatasets
             _cachedRequest = string.Empty;
         }
     }
+
+    /// <summary>
+    /// The host is done with the selection this request asked about: the flattening its tables
+    /// were cut from is let go now, instead of when the next selection is asked about. Kept until
+    /// then, the last load's meshes and every one of its images stayed resident for as long as the
+    /// session sat idle after it -- gigabytes after a scene. A flattening a later request has
+    /// already taken over is that request's, and is not touched.
+    /// </summary>
+    public static void Release(DataRequest request)
+    {
+        string asked = Asked(request.List(Seed), Options(request), request.Map);
+        lock (Gate)
+        {
+            if (_cached is not null && _cachedRequest == asked)
+            {
+                _cached = null;
+                _cachedSignature = string.Empty;
+                _cachedRequest = string.Empty;
+            }
+        }
+    }
+
+    /// <summary>What a request asked, before its seeds are resolved: the seeds, every option a
+    /// flattening depends on, and which map it reads.</summary>
+    private static string Asked(string[] seeds, StatementOptions options, CabTable map)
+        => string.Join("\n", seeds) + "\n" + options.Signature + "\n" + MapIdentity(map);
+
+    private static string MapIdentity(CabTable map)
+        => RuntimeHelpers.GetHashCode(map).ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     private static Basis BasisOf(DataRequest request) => Options(request).Basis;
 

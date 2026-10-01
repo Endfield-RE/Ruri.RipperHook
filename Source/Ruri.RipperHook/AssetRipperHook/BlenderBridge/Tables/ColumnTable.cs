@@ -96,6 +96,20 @@ public sealed class ColumnTable
     public Column? FirstWithRole(ColumnRole role) =>
         Columns.FirstOrDefault(column => (column.Role & role) == role);
 
+    /// <summary>How many bytes its columns hold: what keeping this table costs.</summary>
+    public long ByteSize
+    {
+        get
+        {
+            long bytes = 0;
+            foreach (Column column in Columns)
+            {
+                bytes += column.Data.LongLength + (long)column.Offsets.Length * sizeof(int);
+            }
+            return bytes;
+        }
+    }
+
     public ColumnTable SelectRows(int[] rows) => new()
     {
         Name = Name,
