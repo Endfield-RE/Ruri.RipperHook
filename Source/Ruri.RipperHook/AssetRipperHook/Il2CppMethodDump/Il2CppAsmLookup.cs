@@ -17,7 +17,8 @@ internal static class Il2CppAsmLookup
     {
         if (typeFullName == null) return null;
         string s = typeFullName.Replace('/', '.').Replace('+', '.').Replace('\\', '.');
-        return Regex.Replace(s, "`\\d+", "");    }
+        return Regex.Replace(s, "`\\d+", "");
+    }
 
     private static string Key(string assembly, string type, string method, int paramCount)
         => assembly + "|" + type + "::" + method + "/" + paramCount;
@@ -35,7 +36,8 @@ internal static class Il2CppAsmLookup
                 string typeName = Normalize(type.FullName);
                 foreach (MethodAnalysisContext method in type.Methods)
                 {
-                    if (method.UnderlyingPointer == 0) continue;                    string key = Key(assemblyName, typeName, method.Name, method.Parameters.Count);
+                    if (method.UnderlyingPointer == 0) continue;
+                    string key = Key(assemblyName, typeName, method.Name, method.Parameters.Count);
                     if (!_map.TryGetValue(key, out List<MethodAnalysisContext> list))
                     {
                         list = new List<MethodAnalysisContext>();

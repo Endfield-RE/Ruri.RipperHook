@@ -28,7 +28,8 @@ internal static class Il2CppX86Listing
     {
         if (!ReferenceEquals(_condemnationApp, app)) { _condemnationApp = app; _condemnationScanned.Clear(); }
         AssemblyAnalysisContext assembly = current.DeclaringType?.DeclaringAssembly;
-        if (assembly == null || !_condemnationScanned.Add(assembly)) return;        try
+        if (assembly == null || !_condemnationScanned.Add(assembly)) return;
+        try
         {
             bool is32 = LibCpp2IlMain.Binary.is32Bit;
             {
@@ -44,7 +45,8 @@ internal static class Il2CppX86Listing
                             if (bytes.Length == 0) continue;
                             List<Instruction> insns = DecodeInstructions(bytes, method.UnderlyingPointer, is32);
                             if (insns.Count == 0) continue;
-                            new Il2CppRegisterFlow(app, method, insns, model).Analyze();                        }
+                            new Il2CppRegisterFlow(app, method, insns, model).Analyze();
+                        }
                         catch { }
                     }
                 }
@@ -232,10 +234,12 @@ internal static class Il2CppX86Listing
         bool isFloat = IsFloatElement(info.ElementType) && !IsBitwiseFloatLogical(instruction.Mnemonic);
         if (isFloat)
         {
-            if (info.ElementSize != 2 && info.ElementSize != 4 && info.ElementSize != 8) return false;        }
+            if (info.ElementSize != 2 && info.ElementSize != 4 && info.ElementSize != 8) return false;
+        }
         else
         {
-            if (info.ElementSize != 1 && info.ElementSize != 2 && info.ElementSize != 4 && info.ElementSize != 8) return false;        }
+            if (info.ElementSize != 1 && info.ElementSize != 2 && info.ElementSize != 4 && info.ElementSize != 8) return false;
+        }
 
         virtualAddress = address;
         operand = new Il2CppAsmAnnotator.DataConstantOperand(info.ElementSize, info.ElementCount, isFloat);
@@ -337,7 +341,8 @@ internal static class Il2CppX86Listing
 
     private static bool TryFindMetadataPair(List<Instruction> insns, out ulong slotBase, out ulong slotHeader)
     {
-        slotBase = 0; slotHeader = 0;
+        slotBase = 0;
+        slotHeader = 0;
         for (int i = 1; i < insns.Count; i++)
         {
             if (insns[i - 1].Mnemonic != Mnemonic.Call || !IsDirectStoreOfRegister(insns[i], Register.RAX)) continue;
@@ -346,7 +351,8 @@ internal static class Il2CppX86Listing
             for (int j = i + 1; j < insns.Count && j < i + 18; j++)
             {
                 Instruction y = insns[j];
-                if (y.Mnemonic == Mnemonic.Call) break;                if (y.Op0Kind == OpKind.Register && y.Op0Register == Register.RAX
+                if (y.Mnemonic == Mnemonic.Call) break;
+                if (y.Op0Kind == OpKind.Register && y.Op0Register == Register.RAX
                     && y.Mnemonic != Mnemonic.Cmp && y.Mnemonic != Mnemonic.Test) break;
                 if (y.MemoryBase == Register.RAX && y.MemoryIndex == Register.None) sawDeref = true;
                 if (sawDeref && IsDirectStoreOfRegister(y, Register.RAX))

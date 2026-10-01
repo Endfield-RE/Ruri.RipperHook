@@ -757,7 +757,8 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             charCount += nl.Length;
             charCount += subShaderPrefix.Length + DecimalDigitCount(pass.Read.SubShaderIndex);
             charCount += passInfix.Length + DecimalDigitCount(pass.Read.PassIndex);
-            charCount += blobInfix.Length + DecimalDigitCount(pass.Read.BlobIndex);            charCount += nl.Length;
+            charCount += blobInfix.Length + DecimalDigitCount(pass.Read.BlobIndex);
+            charCount += nl.Length;
 
             charCount += passNamePrefix.Length + (pass.Read.PassName?.Length ?? 0) + nl.Length;
 

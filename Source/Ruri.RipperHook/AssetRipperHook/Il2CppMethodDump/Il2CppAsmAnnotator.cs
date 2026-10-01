@@ -33,16 +33,21 @@ internal static class Il2CppAsmAnnotator
 
     private static ApplicationAnalysisContext _app;
     private static Dictionary<ulong, string> _keyFunctions;
-    private static Dictionary<ulong, string> _exports;    private static ulong[] _sortedMethodStarts;
+    private static Dictionary<ulong, string> _exports;
+    private static ulong[] _sortedMethodStarts;
     private static readonly Dictionary<ulong, string> _globalCache = new();
-    private static readonly Dictionary<ulong, string> _dataCache = new();    private static Dictionary<ulong, string> _runtimeGlobals;    private static ulong _imageBase;
+    private static readonly Dictionary<ulong, string> _dataCache = new();
+    private static Dictionary<ulong, string> _runtimeGlobals;
+    private static ulong _imageBase;
     private static PeSection[] _sections;
     private enum AddressKind { Unknown, Code, ReadOnlyData, WritableData }
 
     private readonly struct PeSection
     {
         public readonly ulong RvaStart;
-        public readonly ulong RvaEnd;        public readonly ulong FileBackedEnd;        public readonly bool Executable;
+        public readonly ulong RvaEnd;
+        public readonly ulong FileBackedEnd;
+        public readonly bool Executable;
         public readonly bool Writable;
 
         public PeSection(ulong rvaStart, ulong rvaEnd, ulong fileBackedEnd, bool executable, bool writable)
@@ -107,7 +112,8 @@ internal static class Il2CppAsmAnnotator
     {
         string hex = m.Groups["a"].Success ? m.Groups["a"].Value : m.Groups["b"].Value;
         if (!ulong.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ulong addr)) return m.Value;
-        if (addr < 0x10000) return m.Value;        bool inBrackets = IsInBrackets(line, m.Index);
+        if (addr < 0x10000) return m.Value;
+        bool inBrackets = IsInBrackets(line, m.Index);
         if (inBrackets && IsRegisterRelativeDisplacement(line, m.Index)) return m.Value;
         return Resolve(addr, inBrackets, overrides, dataConstants) ?? m.Value;
     }
@@ -333,7 +339,8 @@ internal static class Il2CppAsmAnnotator
             if (ch == 0)
                 break;
             if (ch < 0x20 || ch > 0x7E)
-                return null;            sb.Append((char)ch);
+                return null;
+            sb.Append((char)ch);
         }
         return sb.Length >= 2 ? sb.ToString() : null;
     }
@@ -555,7 +562,9 @@ internal static class Il2CppAsmAnnotator
                 uint virtualAddress = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 12));
                 uint rawSize = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 16));
                 uint characteristics = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 36));
-                bool executable = (characteristics & 0x20000000u) != 0;                bool writable = (characteristics & 0x80000000u) != 0;                parsed[i] = new PeSection(virtualAddress, virtualAddress + virtualSize, virtualAddress + rawSize, executable, writable);
+                bool executable = (characteristics & 0x20000000u) != 0;
+                bool writable = (characteristics & 0x80000000u) != 0;
+                parsed[i] = new PeSection(virtualAddress, virtualAddress + virtualSize, virtualAddress + rawSize, executable, writable);
             }
             _sections = parsed;
         }

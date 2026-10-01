@@ -11,13 +11,20 @@ internal sealed class CliOptions
     public List<string> FindShaderForMaterialPaths { get; } = new();
     public List<string> MaterialPaths { get; } = new();
     public bool Help { get; set; }
-    public bool? SplitVariants { get; set; }    public List<string> Hooks { get; } = new();
+    public bool? SplitVariants { get; set; }
+    public List<string> Hooks { get; } = new();
     public string? GameConfig { get; set; }
 
 
-    public string? GameDir { get; set; }    public string? MappingsPath { get; set; }    public string? UeVersion { get; set; }    public string? ExportOut { get; set; }    public string? Aes { get; set; }
+    public string? GameDir { get; set; }
+    public string? MappingsPath { get; set; }
+    public string? UeVersion { get; set; }
+    public string? ExportOut { get; set; }
+    public string? Aes { get; set; }
     public bool ExportUnity { get; set; }
-    public string? UnityVersion { get; set; }    public List<string> PackageFilters { get; } = new();    public int? MaxPackages { get; set; }
+    public string? UnityVersion { get; set; }
+    public List<string> PackageFilters { get; } = new();
+    public int? MaxPackages { get; set; }
     public static CliOptions Parse(string[] args)
     {
         var opts = new CliOptions();

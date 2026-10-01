@@ -36,7 +36,8 @@ public static class HeadlessMount
 
         var versions = new VersionContainer(cfg.UeVersion, cfg.TexturePlatform);
         var provider = new DefaultFileProvider(cfg.GameDirectory, SearchOption.AllDirectories, isCaseInsensitive: true, versions: versions);
-        provider.ReadShaderMaps = true;        provider.Initialize();
+        provider.ReadShaderMaps = true;
+        provider.Initialize();
 
         int submitted = provider.SubmitKeys(BuildKeys(cfg));
         provider.PostMount();

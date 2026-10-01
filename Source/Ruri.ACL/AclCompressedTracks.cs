@@ -29,7 +29,8 @@ namespace Ruri.ACL
         private const int RotFormatQuatFull = 0;
         private const int RotFormatQuatDropWVariable = 3;
 
-        private const int TracksHeaderOffset = 8;        private const int BodyOffset = 32;
+        private const int TracksHeaderOffset = 8;
+        private const int BodyOffset = 32;
         private static readonly byte[] ScalarBitRatesV0 = { 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 32 };
         private static readonly byte[] ScalarBitRatesV1 = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 32 };
 
@@ -101,7 +102,8 @@ namespace Ruri.ACL
                 _subTrackTypesOff = BodyOffset + (int)U32(BodyOffset + 40);
                 _constDataOff = BodyOffset + (int)U32(BodyOffset + 44);
                 _clipRangeOff = BodyOffset + (int)U32(BodyOffset + 48);
-                _segStartIndicesOff = BodyOffset + 52;            }
+                _segStartIndicesOff = BodyOffset + 52;
+            }
             else
             {
                 if (compressedData.Length < BodyOffset + 20)
@@ -237,7 +239,10 @@ namespace Ruri.ACL
 
         private struct Cursor
         {
-            public int Meta;            public int SegRange;            public int Bit;        }
+            public int Meta;
+            public int SegRange;
+            public int Bit;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int SubTrackType(int entriesBase, int trackIndex)
@@ -672,7 +677,8 @@ namespace Ruri.ACL
                 {
                     v = Vector3BE96(c.Bit);
                     c.Bit += 96;
-                    c.SegRange += 6;                    skipClip = true;
+                    c.SegRange += 6;
+                    skipClip = true;
                 }
                 else
                 {

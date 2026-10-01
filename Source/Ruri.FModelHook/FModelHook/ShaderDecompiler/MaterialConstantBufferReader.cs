@@ -517,12 +517,15 @@ internal static class MaterialConstantBufferReader
 
             switch (op)
             {
-                case 0:                    break;
-
-                case 1:                    stack.Push(StackVal.Const("0", "c1:0"));
+                case 0:
                     break;
 
-                case 2:                {
+                case 1:
+                    stack.Push(StackVal.Const("0", "c1:0"));
+                    break;
+
+                case 2:
+                {
                     if (i >= n) return null;
                     byte ctype = data[dataStart + i];
                     int valueBytes = ctype switch
@@ -550,7 +553,8 @@ internal static class MaterialConstantBufferReader
                     break;
                 }
 
-                case 3:                {
+                case 3:
+                {
                     if (i + 2 > n) return null;
                     ushort idx = BitConverter.ToUInt16(data, dataStart + i);
                     if (idx >= parameters.Length) return null;
@@ -563,7 +567,8 @@ internal static class MaterialConstantBufferReader
                     break;
                 }
 
-                case 36:                {
+                case 36:
+                {
                     if (i + 5 > n) return null;
                     string swizzle = SwizzleSuffix(
                         data[dataStart + i + 0],
@@ -585,7 +590,8 @@ internal static class MaterialConstantBufferReader
                     break;
                 }
 
-                case 37:                {
+                case 37:
+                {
                     if (stack.Count < 2) return null;
                     StackVal b = stack.Pop();
                     StackVal a = stack.Pop();
@@ -593,7 +599,9 @@ internal static class MaterialConstantBufferReader
                     break;
                 }
 
-                case 38:                case 39:                {
+                case 38:
+                case 39:
+                {
                     if (i + 11 > n) return null;
                     ushort nameIdx = BitConverter.ToUInt16(data, dataStart + i);
                     int textureIdx = BitConverter.ToInt32(data, dataStart + i + 7);
@@ -604,7 +612,8 @@ internal static class MaterialConstantBufferReader
                     break;
                 }
 
-                case 42:                {
+                case 42:
+                {
                     if (i + 15 > n) return null;
                     ushort nameIdx = BitConverter.ToUInt16(data, dataStart + i);
                     int textureIdx = BitConverter.ToInt32(data, dataStart + i + 7);
@@ -616,7 +625,9 @@ internal static class MaterialConstantBufferReader
                     break;
                 }
 
-                case 40:                case 41:                {
+                case 40:
+                case 41:
+                {
                     if (i + 22 > n) return null;
                     ushort nameIdx = BitConverter.ToUInt16(data, dataStart + i);
                     int textureIdx = BitConverter.ToInt32(data, dataStart + i + 18);
@@ -717,7 +728,11 @@ internal static class MaterialConstantBufferReader
 
         private StackVal(string name, bool isParam, bool isConst, string? lit, string program)
         {
-            Name = name; IsParam = isParam; IsConst = isConst; ConstLiteral = lit; Program = program;
+            Name = name;
+            IsParam = isParam;
+            IsConst = isConst;
+            ConstLiteral = lit;
+            Program = program;
         }
 
         public static StackVal Param(string n, string program) => new(n, true, false, null, program);
@@ -804,8 +819,13 @@ internal static class MaterialConstantBufferReader
 
             switch (op)
             {
-                case 0: break;                case 1: stack.Push(new float[4]); widths.Push(4); break;
-                case 2:                {
+                case 0: break;
+                case 1:
+                    stack.Push(new float[4]);
+                    widths.Push(4);
+                    break;
+                case 2:
+                {
                     if (i >= n) return null;
                     byte ctype = data[dataStart + i];
                     int comps = ctype switch { 1 => 1, 2 => 2, 3 => 3, 4 => 4, _ => -1 };
@@ -819,7 +839,8 @@ internal static class MaterialConstantBufferReader
                     break;
                 }
 
-                case 3:                {
+                case 3:
+                {
                     if (i + 2 > n) return null;
                     ushort idx = BitConverter.ToUInt16(data, dataStart + i);
                     if (idx >= parameters.Length) return null;
@@ -831,7 +852,8 @@ internal static class MaterialConstantBufferReader
                     break;
                 }
 
-                case 36:                {
+                case 36:
+                {
                     if (i + 5 > n) return null;
                     int numE = data[dataStart + i];
                     byte[] idxs = { data[dataStart + i + 1], data[dataStart + i + 2], data[dataStart + i + 3], data[dataStart + i + 4] };
@@ -850,7 +872,8 @@ internal static class MaterialConstantBufferReader
                     break;
                 }
 
-                case 37:                {
+                case 37:
+                {
                     if (stack.Count < 2 || widths.Count < 2) return null;
                     float[] b = stack.Pop();
                     float[] a = stack.Pop();
@@ -877,10 +900,12 @@ internal static class MaterialConstantBufferReader
                     float[]? r = ApplyBinary(op, a, b);
                     if (r == null) return null;
                     stack.Push(r);
-                    widths.Push(op == 19 ? 1 : Math.Max(aw, bw));                    break;
+                    widths.Push(op == 19 ? 1 : Math.Max(aw, bw));
+                    break;
                 }
 
-                case 11:                {
+                case 11:
+                {
                     if (stack.Count < 3 || widths.Count < 3) return null;
                     float[] hi = stack.Pop();
                     float[] lo = stack.Pop();
@@ -906,7 +931,8 @@ internal static class MaterialConstantBufferReader
                     float[]? r = ApplyUnary(op, x);
                     if (r == null) return null;
                     stack.Push(r);
-                    widths.Push(op == 23 ? 1 : xw);                    break;
+                    widths.Push(op == 23 ? 1 : xw);
+                    break;
                 }
 
                 case 38:
@@ -941,7 +967,8 @@ internal static class MaterialConstantBufferReader
         }
 
         if (stack.Count == 0) return null;
-        var bottomToTop = new List<float[]>(stack);        bottomToTop.Reverse();
+        var bottomToTop = new List<float[]>(stack);
+        bottomToTop.Reverse();
         return bottomToTop;
     }
 
@@ -950,29 +977,55 @@ internal static class MaterialConstantBufferReader
         float[] r = new float[4];
         switch (op)
         {
-            case 4: for (int c = 0; c < 4; c++) r[c] = a[c] + b[c]; return r;
-            case 5: for (int c = 0; c < 4; c++) r[c] = a[c] - b[c]; return r;
-            case 6: for (int c = 0; c < 4; c++) r[c] = a[c] * b[c]; return r;
-            case 7: for (int c = 0; c < 4; c++) r[c] = b[c] != 0f ? a[c] / b[c] : 0f; return r;
-            case 8: for (int c = 0; c < 4; c++) r[c] = b[c] != 0f ? a[c] - b[c] * MathF.Truncate(a[c] / b[c]) : 0f; return r;
-            case 9: for (int c = 0; c < 4; c++) r[c] = MathF.Min(a[c], b[c]); return r;
-            case 10: for (int c = 0; c < 4; c++) r[c] = MathF.Max(a[c], b[c]); return r;
-            case 18: for (int c = 0; c < 4; c++) r[c] = MathF.Atan2(a[c], b[c]); return r;
-            case 19:            {
+            case 4:
+                for (int c = 0; c < 4; c++) r[c] = a[c] + b[c];
+                return r;
+            case 5:
+                for (int c = 0; c < 4; c++) r[c] = a[c] - b[c];
+                return r;
+            case 6:
+                for (int c = 0; c < 4; c++) r[c] = a[c] * b[c];
+                return r;
+            case 7:
+                for (int c = 0; c < 4; c++) r[c] = b[c] != 0f ? a[c] / b[c] : 0f;
+                return r;
+            case 8:
+                for (int c = 0; c < 4; c++) r[c] = b[c] != 0f ? a[c] - b[c] * MathF.Truncate(a[c] / b[c]) : 0f;
+                return r;
+            case 9:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Min(a[c], b[c]);
+                return r;
+            case 10:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Max(a[c], b[c]);
+                return r;
+            case 18:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Atan2(a[c], b[c]);
+                return r;
+            case 19:
+            {
                 float d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
                 return new[] { d, d, d, d };
             }
-            case 20:                return new[]
+            case 20:
+                return new[]
                 {
                     a[1] * b[2] - a[2] * b[1],
                     a[2] * b[0] - a[0] * b[2],
                     a[0] * b[1] - a[1] * b[0],
                     0f,
                 };
-            case 49: for (int c = 0; c < 4; c++) r[c] = a[c] < b[c] ? 1f : 0f; return r;
-            case 51: for (int c = 0; c < 4; c++) r[c] = a[c] > b[c] ? 1f : 0f; return r;
-            case 52: for (int c = 0; c < 4; c++) r[c] = a[c] <= b[c] ? 1f : 0f; return r;
-            case 53: for (int c = 0; c < 4; c++) r[c] = a[c] >= b[c] ? 1f : 0f; return r;
+            case 49:
+                for (int c = 0; c < 4; c++) r[c] = a[c] < b[c] ? 1f : 0f;
+                return r;
+            case 51:
+                for (int c = 0; c < 4; c++) r[c] = a[c] > b[c] ? 1f : 0f;
+                return r;
+            case 52:
+                for (int c = 0; c < 4; c++) r[c] = a[c] <= b[c] ? 1f : 0f;
+                return r;
+            case 53:
+                for (int c = 0; c < 4; c++) r[c] = a[c] >= b[c] ? 1f : 0f;
+                return r;
             default: return null;
         }
     }
@@ -982,34 +1035,74 @@ internal static class MaterialConstantBufferReader
         float[] r = new float[4];
         switch (op)
         {
-            case 12: for (int c = 0; c < 4; c++) r[c] = MathF.Sin(x[c]); return r;
-            case 13: for (int c = 0; c < 4; c++) r[c] = MathF.Cos(x[c]); return r;
-            case 14: for (int c = 0; c < 4; c++) r[c] = MathF.Tan(x[c]); return r;
-            case 15: for (int c = 0; c < 4; c++) r[c] = MathF.Asin(x[c]); return r;
-            case 16: for (int c = 0; c < 4; c++) r[c] = MathF.Acos(x[c]); return r;
-            case 17: for (int c = 0; c < 4; c++) r[c] = MathF.Atan(x[c]); return r;
-            case 21: for (int c = 0; c < 4; c++) r[c] = x[c] > 0f ? MathF.Sqrt(x[c]) : 0f; return r;
-            case 22: for (int c = 0; c < 4; c++) r[c] = x[c] != 0f ? 1f / x[c] : 0f; return r;
-            case 23:            {
+            case 12:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Sin(x[c]);
+                return r;
+            case 13:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Cos(x[c]);
+                return r;
+            case 14:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Tan(x[c]);
+                return r;
+            case 15:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Asin(x[c]);
+                return r;
+            case 16:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Acos(x[c]);
+                return r;
+            case 17:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Atan(x[c]);
+                return r;
+            case 21:
+                for (int c = 0; c < 4; c++) r[c] = x[c] > 0f ? MathF.Sqrt(x[c]) : 0f;
+                return r;
+            case 22:
+                for (int c = 0; c < 4; c++) r[c] = x[c] != 0f ? 1f / x[c] : 0f;
+                return r;
+            case 23:
+            {
                 float l = MathF.Sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
                 return new[] { l, l, l, l };
             }
-            case 24:            {
+            case 24:
+            {
                 float l = MathF.Sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
                 if (l <= 0f) return new float[4];
                 return new[] { x[0] / l, x[1] / l, x[2] / l, x[3] };
             }
-            case 25: for (int c = 0; c < 4; c++) r[c] = MathF.Min(MathF.Max(x[c], 0f), 1f); return r;
-            case 26: for (int c = 0; c < 4; c++) r[c] = MathF.Abs(x[c]); return r;
-            case 27: for (int c = 0; c < 4; c++) r[c] = MathF.Floor(x[c]); return r;
-            case 28: for (int c = 0; c < 4; c++) r[c] = MathF.Ceiling(x[c]); return r;
-            case 29: for (int c = 0; c < 4; c++) r[c] = MathF.Round(x[c]); return r;
-            case 30: for (int c = 0; c < 4; c++) r[c] = MathF.Truncate(x[c]); return r;
-            case 31: for (int c = 0; c < 4; c++) r[c] = MathF.Sign(x[c]); return r;
-            case 32: case 33: for (int c = 0; c < 4; c++) r[c] = x[c] - MathF.Floor(x[c]); return r;
-            case 34: for (int c = 0; c < 4; c++) r[c] = x[c] > 0f ? MathF.Log2(x[c]) : 0f; return r;
-            case 35: for (int c = 0; c < 4; c++) r[c] = x[c] > 0f ? MathF.Log10(x[c]) : 0f; return r;
-            case 45: for (int c = 0; c < 4; c++) r[c] = -x[c]; return r;
+            case 25:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Min(MathF.Max(x[c], 0f), 1f);
+                return r;
+            case 26:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Abs(x[c]);
+                return r;
+            case 27:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Floor(x[c]);
+                return r;
+            case 28:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Ceiling(x[c]);
+                return r;
+            case 29:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Round(x[c]);
+                return r;
+            case 30:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Truncate(x[c]);
+                return r;
+            case 31:
+                for (int c = 0; c < 4; c++) r[c] = MathF.Sign(x[c]);
+                return r;
+            case 32: case 33:
+                for (int c = 0; c < 4; c++) r[c] = x[c] - MathF.Floor(x[c]);
+                return r;
+            case 34:
+                for (int c = 0; c < 4; c++) r[c] = x[c] > 0f ? MathF.Log2(x[c]) : 0f;
+                return r;
+            case 35:
+                for (int c = 0; c < 4; c++) r[c] = x[c] > 0f ? MathF.Log10(x[c]) : 0f;
+                return r;
+            case 45:
+                for (int c = 0; c < 4; c++) r[c] = -x[c];
+                return r;
             default: return null;
         }
     }
@@ -1235,28 +1328,72 @@ internal static class MaterialConstantBufferReader
         rows = 0;
         switch (fieldType)
         {
-            case "Float1": rows = 1; return FieldKind.Float;
-            case "Float2": rows = 2; return FieldKind.Float;
-            case "Float3": rows = 3; return FieldKind.Float;
-            case "Float4": rows = 4; return FieldKind.Float;
-            case "Double1": rows = 1; return FieldKind.LwcDouble;
-            case "Double2": rows = 2; return FieldKind.LwcDouble;
-            case "Double3": rows = 3; return FieldKind.LwcDouble;
-            case "Double4": rows = 4; return FieldKind.LwcDouble;
-            case "Int1": rows = 1; return FieldKind.Int;
-            case "Int2": rows = 2; return FieldKind.Int;
-            case "Int3": rows = 3; return FieldKind.Int;
-            case "Int4": rows = 4; return FieldKind.Int;
-            case "Bool1": rows = 1; return FieldKind.Bool;
-            case "Bool2": rows = 2; return FieldKind.Bool;
-            case "Bool3": rows = 3; return FieldKind.Bool;
-            case "Bool4": rows = 4; return FieldKind.Bool;
-            case "Numeric1": rows = 1; return FieldKind.Numeric;
-            case "Numeric2": rows = 2; return FieldKind.Numeric;
-            case "Numeric3": rows = 3; return FieldKind.Numeric;
-            case "Numeric4": rows = 4; return FieldKind.Numeric;
-            case "Float4x4": rows = 4; return FieldKind.Float4x4;
-            case "Double4x4": rows = 4; return FieldKind.LwcDouble4x4;
+            case "Float1":
+                rows = 1;
+                return FieldKind.Float;
+            case "Float2":
+                rows = 2;
+                return FieldKind.Float;
+            case "Float3":
+                rows = 3;
+                return FieldKind.Float;
+            case "Float4":
+                rows = 4;
+                return FieldKind.Float;
+            case "Double1":
+                rows = 1;
+                return FieldKind.LwcDouble;
+            case "Double2":
+                rows = 2;
+                return FieldKind.LwcDouble;
+            case "Double3":
+                rows = 3;
+                return FieldKind.LwcDouble;
+            case "Double4":
+                rows = 4;
+                return FieldKind.LwcDouble;
+            case "Int1":
+                rows = 1;
+                return FieldKind.Int;
+            case "Int2":
+                rows = 2;
+                return FieldKind.Int;
+            case "Int3":
+                rows = 3;
+                return FieldKind.Int;
+            case "Int4":
+                rows = 4;
+                return FieldKind.Int;
+            case "Bool1":
+                rows = 1;
+                return FieldKind.Bool;
+            case "Bool2":
+                rows = 2;
+                return FieldKind.Bool;
+            case "Bool3":
+                rows = 3;
+                return FieldKind.Bool;
+            case "Bool4":
+                rows = 4;
+                return FieldKind.Bool;
+            case "Numeric1":
+                rows = 1;
+                return FieldKind.Numeric;
+            case "Numeric2":
+                rows = 2;
+                return FieldKind.Numeric;
+            case "Numeric3":
+                rows = 3;
+                return FieldKind.Numeric;
+            case "Numeric4":
+                rows = 4;
+                return FieldKind.Numeric;
+            case "Float4x4":
+                rows = 4;
+                return FieldKind.Float4x4;
+            case "Double4x4":
+                rows = 4;
+                return FieldKind.LwcDouble4x4;
             default: return FieldKind.Unknown;
         }
     }

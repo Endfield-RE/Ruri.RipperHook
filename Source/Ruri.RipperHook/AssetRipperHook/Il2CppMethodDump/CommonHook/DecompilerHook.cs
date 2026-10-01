@@ -21,7 +21,9 @@ public partial class AR_Il2CppMethodDump_Hook
         MethodInfo addTransform = typeof(AR_Il2CppMethodDump_Hook)
             .GetMethod(nameof(AddTransform), BindingFlags.Public | BindingFlags.Static);
 
-        cursor.Emit(OpCodes.Dup);        cursor.Emit(OpCodes.Call, addTransform);        return true;
+        cursor.Emit(OpCodes.Dup);
+        cursor.Emit(OpCodes.Call, addTransform);
+        return true;
     }
 
     public static void AddTransform(CSharpDecompiler decompiler)

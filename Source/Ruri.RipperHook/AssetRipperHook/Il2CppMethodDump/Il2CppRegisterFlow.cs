@@ -48,7 +48,8 @@ internal readonly struct TrackedValue : IEquatable<TrackedValue>
     public static TrackedValue RefFromVtable(TypeAnalysisContext type, string originTypeName, int originSlot) => new(TrackedKind.ManagedRef, type, null, originTypeName, originSlot);
     public static TrackedValue Info(TypeAnalysisContext type) => new(TrackedKind.TypeInfo, type, null);
     public static TrackedValue StaticBaseOf(TypeAnalysisContext type) => new(TrackedKind.StaticBase, type, null);
-    public static TrackedValue KlassOf(TypeAnalysisContext type) => new(TrackedKind.Klass, type, null);    public static TrackedValue Callee(TypeAnalysisContext returnType, string originTypeName, int originSlot) => new(TrackedKind.Callee, returnType, null, originTypeName, originSlot);
+    public static TrackedValue KlassOf(TypeAnalysisContext type) => new(TrackedKind.Klass, type, null);
+    public static TrackedValue Callee(TypeAnalysisContext returnType, string originTypeName, int originSlot) => new(TrackedKind.Callee, returnType, null, originTypeName, originSlot);
     public bool IsKnown => Kind != TrackedKind.Unknown;
     public bool Equals(TrackedValue other) => Kind == other.Kind && SameType(Type, other.Type);
     public override bool Equals(object obj) => obj is TrackedValue value && Equals(value);
@@ -118,7 +119,8 @@ internal sealed class Il2CppRegisterFlow
         }
         catch
         {
-            _comments = null;        }
+            _comments = null;
+        }
     }
 
     private void BuildBlocks()
@@ -276,7 +278,8 @@ internal sealed class Il2CppRegisterFlow
         int blockCount = _blockFirst.Length;
         for (int b = 0; b < blockCount; b++)
         {
-            if (_entryState[b] == null) continue;            TransferBlock(b, _entryState[b], _comments);
+            if (_entryState[b] == null) continue;
+            TransferBlock(b, _entryState[b], _comments);
         }
     }
 
@@ -289,8 +292,10 @@ internal sealed class Il2CppRegisterFlow
             if ((uint)index < (uint)_comments.Length && DispatchResultContradicts(index, fnReg, kind))
             {
                 (condemned ??= new()).Add((typeName, SlotKey(disp)));
-                _model.CondemnedVtableSlots.Add((typeName, SlotKey(disp)));                if (methodName != null)
-                    _model.CondemnedVtableMethods.Add((methodName, SlotKey(disp)));            }
+                _model.CondemnedVtableSlots.Add((typeName, SlotKey(disp)));
+                if (methodName != null)
+                    _model.CondemnedVtableMethods.Add((methodName, SlotKey(disp)));
+            }
         }
         if (condemned == null) return;
         foreach ((int index, int _, int disp, string typeName, byte _, string _) in _arrowRetractCandidates)
@@ -317,7 +322,8 @@ internal sealed class Il2CppRegisterFlow
         int callIdx;
         if (fnReg < 0)
         {
-            callIdx = arrowIndex;        }
+            callIdx = arrowIndex;
+        }
         else
         {
             callIdx = -1;
@@ -328,7 +334,9 @@ internal sealed class Il2CppRegisterFlow
                     && RegisterFlowUtil.GpIndex(c.Op0Register) == fnReg)
                 { callIdx = j; break; }
                 if (c.FlowControl is FlowControl.Call or FlowControl.IndirectCall or FlowControl.IndirectBranch)
-                    return false;                if ((_clobber[j] & (1 << fnReg)) != 0) return false;            }
+                    return false;
+                if ((_clobber[j] & (1 << fnReg)) != 0) return false;
+            }
             if (callIdx < 0) return false;
         }
 
@@ -366,7 +374,10 @@ internal sealed class Il2CppRegisterFlow
                 return true;
 
             if (u.FlowControl is FlowControl.Call or FlowControl.IndirectCall or FlowControl.IndirectBranch)
-                break;            if (raxLive && (_clobber[j] & (1 << 0)) != 0) raxLive = false;            if (xmm0Live && WritesXmm0(u)) xmm0Live = false;            if (!raxLive && !xmm0Live) break;
+                break;
+            if (raxLive && (_clobber[j] & (1 << 0)) != 0) raxLive = false;
+            if (xmm0Live && WritesXmm0(u)) xmm0Live = false;
+            if (!raxLive && !xmm0Live) break;
         }
         return (raxIntLike || isFloat) && RaxBecomesThisOfManagedInstanceCall(callIdx);
     }
@@ -374,30 +385,38 @@ internal sealed class Il2CppRegisterFlow
     private static bool ReadsXmm0(in Instruction u)
     {
         if (u.Op1Register == Register.XMM0 || u.Op2Register == Register.XMM0)
-            return true;        return u.Op0Register == Register.XMM0 && !IsXmmPureWrite(u.Mnemonic);    }
+            return true;
+        return u.Op0Register == Register.XMM0 && !IsXmmPureWrite(u.Mnemonic);
+    }
 
     private static bool WritesXmm0(in Instruction u) => u.Op0Register == Register.XMM0;
 
     private static bool ReadsAl(in Instruction u)
     {
         if ((u.Mnemonic is Mnemonic.Xor or Mnemonic.Sub) && u.Op0Register == Register.AL && u.Op1Register == Register.AL)
-            return false;        if (u.Op1Register == Register.AL || u.Op2Register == Register.AL)
-            return true;        return u.Op0Register == Register.AL            && u.Mnemonic is not (Mnemonic.Mov or Mnemonic.Movzx or Mnemonic.Movsx or Mnemonic.Lea);
+            return false;
+        if (u.Op1Register == Register.AL || u.Op2Register == Register.AL)
+            return true;
+        return u.Op0Register == Register.AL            && u.Mnemonic is not (Mnemonic.Mov or Mnemonic.Movzx or Mnemonic.Movsx or Mnemonic.Lea);
     }
 
     private static bool ReadsEax(in Instruction u)
     {
         if ((u.Mnemonic is Mnemonic.Xor or Mnemonic.Sub) && u.Op0Register == Register.EAX && u.Op1Register == Register.EAX)
-            return false;        if (u.Op1Register == Register.EAX || u.Op2Register == Register.EAX)
+            return false;
+        if (u.Op1Register == Register.EAX || u.Op2Register == Register.EAX)
             return true;
         return u.Op0Register == Register.EAX
-            && u.Mnemonic is not (Mnemonic.Mov or Mnemonic.Movzx or Mnemonic.Movsx or Mnemonic.Movsxd or Mnemonic.Lea);    }
+            && u.Mnemonic is not (Mnemonic.Mov or Mnemonic.Movzx or Mnemonic.Movsx or Mnemonic.Movsxd or Mnemonic.Lea);
+    }
 
     private bool ArgCountContradicts(TypeAnalysisContext type, int disp, in Instruction insn)
     {
         if ((disp & 0xF) != 8 || insn.Op0Kind != OpKind.Register)
-            return false;        if (_model.GetVirtualReturnKind(type, disp) is Il2CppTypeModel.ReturnKindStruct or Il2CppTypeModel.ReturnKindUnresolved)
-            return false;        int total = _model.GetVirtualParamCount(type, disp);
+            return false;
+        if (_model.GetVirtualReturnKind(type, disp) is Il2CppTypeModel.ReturnKindStruct or Il2CppTypeModel.ReturnKindUnresolved)
+            return false;
+        int total = _model.GetVirtualParamCount(type, disp);
         if (total < 0)
             return false;
         int implied = insn.Op0Register switch
@@ -416,7 +435,8 @@ internal sealed class Il2CppRegisterFlow
     {
         if (insn.FlowControl != FlowControl.IndirectCall)            return false;
         if (_model.GetVirtualReturnKind(type, disp) is Il2CppTypeModel.ReturnKindStruct or Il2CppTypeModel.ReturnKindUnresolved)
-            return false;        System.ReadOnlySpan<Register> argRegisters = stackalloc Register[] { Register.RDX, Register.R8, Register.R9 };
+            return false;
+        System.ReadOnlySpan<Register> argRegisters = stackalloc Register[] { Register.RDX, Register.R8, Register.R9 };
         for (int i = 0; i < argRegisters.Length; i++)
         {
             TypeAnalysisContext paramType = _model.GetVirtualParamType(type, disp, i);
@@ -450,7 +470,8 @@ internal sealed class Il2CppRegisterFlow
     {
         if (name == null)
             return false;
-        string n = name.StartsWith("System.") ? name.Substring(7) : name;        return n == "Object.ToString()" || n == "Object.GetHashCode()" || n == "Object.Finalize()" || n.StartsWith("Object.Equals(");
+        string n = name.StartsWith("System.") ? name.Substring(7) : name;
+        return n == "Object.ToString()" || n == "Object.GetHashCode()" || n == "Object.Finalize()" || n.StartsWith("Object.Equals(");
     }
 
     private static bool AreUnrelatedRefClasses(TypeAnalysisContext a, TypeAnalysisContext b)
@@ -497,14 +518,16 @@ internal sealed class Il2CppRegisterFlow
                 if (u.Mnemonic == Mnemonic.Mov && u.Op0Kind == OpKind.Register && u.Op0Register == Register.RCX
                     && u.Op1Kind == OpKind.Register && u.Op1Register == Register.RAX)
                 { inRcx = true; continue; }
-                if ((_clobber[j] & (1 << 0)) != 0) return false;            }
+                if ((_clobber[j] & (1 << 0)) != 0) return false;
+            }
             else
             {
                 if (u.FlowControl == FlowControl.Call && u.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32
                     && _app.MethodsByAddress.TryGetValue(u.NearBranchTarget, out List<MethodAnalysisContext> callee)
                     && callee.Count > 0 && !callee[0].IsStatic)
                     return true;
-                if ((_clobber[j] & (1 << 1)) != 0) return false;            }
+                if ((_clobber[j] & (1 << 1)) != 0) return false;
+            }
         }
         return false;
     }
@@ -618,11 +641,13 @@ internal sealed class Il2CppRegisterFlow
 
         if (insn.FlowControl == FlowControl.Call)
         {
-            state[0] = isAlloc ? allocResult : CallReturn(insn);            return;
+            state[0] = isAlloc ? allocResult : CallReturn(insn);
+            return;
         }
         if (hasDirectVtableRef)
         {
-            state[0] = directVtableRef;            return;
+            state[0] = directVtableRef;
+            return;
         }
 
         if (hasNew && dst >= 0)
@@ -783,7 +808,8 @@ internal sealed class Il2CppRegisterFlow
             }
             else
             {
-                access = "-> " + virtualMethod;                if (insn.FlowControl != FlowControl.IndirectBranch)
+                access = "-> " + virtualMethod;
+                if (insn.FlowControl != FlowControl.IndirectBranch)
                 {
                     int fnReg = insn.FlowControl == FlowControl.IndirectCall ? -1 : RegisterFlowUtil.GpIndex(insn.Op0Register);
                     if (fnReg >= 0 || insn.FlowControl == FlowControl.IndirectCall)
@@ -858,13 +884,15 @@ internal sealed class Il2CppRegisterFlow
             for (int p = 0; p < _method.Parameters.Count; p++, slot++)
             {
                 int reg = MsvcSlotReg(slot);
-                if (reg < 0) break;                ParameterAnalysisContext par = _method.Parameters[p];
+                if (reg < 0) break;
+                ParameterAnalysisContext par = _method.Parameters[p];
                 if (IsSeedableRef(par.ParameterType)) state[reg] = TrackedValue.Ref(par.ParameterType, par.Name ?? ("arg" + p));
             }
         }
         else
         {
-            int nreg = 0;            if (hiddenReturn) { state[ElfSlotReg(0)] = TrackedValue.Ref(_method.ReturnType, "retval"); nreg = 1; }
+            int nreg = 0;
+            if (hiddenReturn) { state[ElfSlotReg(0)] = TrackedValue.Ref(_method.ReturnType, "retval"); nreg = 1; }
             if (addThis)
             {
                 int reg = ElfSlotReg(nreg);
@@ -873,7 +901,8 @@ internal sealed class Il2CppRegisterFlow
             }
             foreach (ParameterAnalysisContext par in _method.Parameters)
             {
-                if (IsFloat(par.ParameterType)) continue;                int reg = ElfSlotReg(nreg);
+                if (IsFloat(par.ParameterType)) continue;
+                int reg = ElfSlotReg(nreg);
                 if (reg < 0) break;
                 if (IsSeedableRef(par.ParameterType)) state[reg] = TrackedValue.Ref(par.ParameterType, par.Name ?? "arg");
                 nreg++;
@@ -882,7 +911,8 @@ internal sealed class Il2CppRegisterFlow
         return state;
     }
 
-    private static int MsvcSlotReg(int slot) => slot switch { 0 => 1, 1 => 2, 2 => 8, 3 => 9, _ => -1 };    private static int ElfSlotReg(int slot) => slot switch { 0 => 7, 1 => 6, 2 => 2, 3 => 1, 4 => 8, 5 => 9, _ => -1 };
+    private static int MsvcSlotReg(int slot) => slot switch { 0 => 1, 1 => 2, 2 => 8, 3 => 9, _ => -1 };
+    private static int ElfSlotReg(int slot) => slot switch { 0 => 7, 1 => 6, 2 => 2, 3 => 1, 4 => 8, 5 => 9, _ => -1 };
     private bool IsSeedableRef(TypeAnalysisContext type)
         => type != null && !type.IsValueType;
     private bool IsFloat(TypeAnalysisContext type)

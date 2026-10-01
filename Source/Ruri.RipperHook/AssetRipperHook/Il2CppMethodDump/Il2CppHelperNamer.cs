@@ -11,7 +11,8 @@ internal static class Il2CppHelperNamer
     private static ApplicationAnalysisContext _app;
     private static readonly Dictionary<ulong, string> _cache = new();
     private static readonly Dictionary<ulong, bool> _reachesRaise = new();
-    private static ulong _raiseA;    private static ulong _raiseB;
+    private static ulong _raiseA;
+    private static ulong _raiseB;
     public static string TryGetName(ApplicationAnalysisContext app, ulong address)
     {
         if (!ReferenceEquals(_app, app))
@@ -45,7 +46,14 @@ internal static class Il2CppHelperNamer
 
             Decoder decoder = Decoder.Create(64, new ByteArrayCodeReader(code), address);
             ulong end = address + (ulong)code.Length;
-            string typeName = null;            bool throwsLike = false;            bool tailCalls = false;            bool sawInt3 = false;            bool sawCondBranch = false;            bool reachesRaiseDirect = false;            List<ulong> callTargets = null;            int guard = 0;
+            string typeName = null;
+            bool throwsLike = false;
+            bool tailCalls = false;
+            bool sawInt3 = false;
+            bool sawCondBranch = false;
+            bool reachesRaiseDirect = false;
+            List<ulong> callTargets = null;
+            int guard = 0;
             while (decoder.IP < end && guard++ < 40)
             {
                 decoder.Decode(out Instruction insn);
@@ -74,10 +82,12 @@ internal static class Il2CppHelperNamer
                 if (insn.Mnemonic == Mnemonic.Int3)
                     throwsLike = true;
                 if (insn.FlowControl == FlowControl.ConditionalBranch)
-                    sawCondBranch = true;                if (insn.Mnemonic == Mnemonic.Jmp && insn.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32)
+                    sawCondBranch = true;
+                if (insn.Mnemonic == Mnemonic.Jmp && insn.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32)
                 {
                     ulong jt = insn.NearBranchTarget;
-                    if (jt < address || jt >= end) { tailCalls = true; break; }                }
+                    if (jt < address || jt >= end) { tailCalls = true; break; }
+                }
                 if (insn.Mnemonic == Mnemonic.Ret)
                     break;
                 if (insn.Mnemonic == Mnemonic.Int3)
@@ -116,7 +126,8 @@ internal static class Il2CppHelperNamer
             return false;
         if (_reachesRaise.TryGetValue(addr, out bool cached))
             return cached;
-        _reachesRaise[addr] = false;        bool result = false;
+        _reachesRaise[addr] = false;
+        bool result = false;
         try
         {
             long raw = binary.MapVirtualAddressToRaw(addr, false);

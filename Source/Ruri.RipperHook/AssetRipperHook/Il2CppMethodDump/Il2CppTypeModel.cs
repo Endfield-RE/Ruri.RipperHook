@@ -25,7 +25,11 @@ internal sealed class Il2CppTypeModel
 
     public readonly HashSet<(string, int)> CondemnedVtableMethods = new();
 
-    private readonly Dictionary<TypeAnalysisContext, string[]> _vtableNames = new();    private readonly Dictionary<TypeAnalysisContext, TypeAnalysisContext[]> _vtableReturns = new();    private readonly Dictionary<TypeAnalysisContext, byte[]> _vtableReturnKinds = new();    private readonly Dictionary<TypeAnalysisContext, sbyte[]> _vtableParamCounts = new();    private readonly Dictionary<TypeAnalysisContext, TypeAnalysisContext[][]> _vtableParamTypes = new();
+    private readonly Dictionary<TypeAnalysisContext, string[]> _vtableNames = new();
+    private readonly Dictionary<TypeAnalysisContext, TypeAnalysisContext[]> _vtableReturns = new();
+    private readonly Dictionary<TypeAnalysisContext, byte[]> _vtableReturnKinds = new();
+    private readonly Dictionary<TypeAnalysisContext, sbyte[]> _vtableParamCounts = new();
+    private readonly Dictionary<TypeAnalysisContext, TypeAnalysisContext[][]> _vtableParamTypes = new();
     public const byte ReturnKindUnresolved = 0;
     public const byte ReturnKindVoid = 1;
     public const byte ReturnKindScalarInt = 2;
@@ -142,7 +146,8 @@ internal sealed class Il2CppTypeModel
                 fieldType = concrete;
             int size = PrimitiveSize(fieldType, depth + 1);
             int align = size < 1 ? 1 : System.Math.Min(size, 8);
-            offset = (offset + align - 1) & ~(align - 1);            offset += size;
+            offset = (offset + align - 1) & ~(align - 1);
+            offset += size;
             if (align > maxAlign) maxAlign = align;
         }
         return offset == 0 ? 1 : (offset + maxAlign - 1) & ~(maxAlign - 1);
@@ -171,7 +176,8 @@ internal sealed class Il2CppTypeModel
             case Il2CppTypeEnum.IL2CPP_TYPE_R8:
                 return 8;
             case Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE:
-                return EstimateValueTypeSize(type, depth);            default:
+                return EstimateValueTypeSize(type, depth);
+            default:
                 return 8;        }
     }
 
@@ -216,7 +222,8 @@ internal sealed class Il2CppTypeModel
     {
         if (type.Definition == null)
             return;
-        bool allowZeroOffset = statics || type.IsValueType;        foreach (FieldAnalysisContext field in type.Fields)
+        bool allowZeroOffset = statics || type.IsValueType;
+        foreach (FieldAnalysisContext field in type.Fields)
         {
             if (field.IsStatic != statics)
                 continue;
@@ -227,7 +234,8 @@ internal sealed class Il2CppTypeModel
             catch { continue; }
             if (offset < 0 || (offset == 0 && !allowZeroOffset))
                 continue;
-            map.TryAdd(offset, field);        }
+            map.TryAdd(offset, field);
+        }
     }
 
     private int DiscoverStaticFieldsOffset(ApplicationAnalysisContext app)
@@ -266,7 +274,8 @@ internal sealed class Il2CppTypeModel
                 best = candidate.Key;
             }
         }
-        return bestCount >= 3 ? best : -1;    }
+        return bestCount >= 3 ? best : -1;
+    }
 
     private void ScanMethodForStaticIdiom(MethodAnalysisContext method, Dictionary<int, int> confirmed, ref int confirmations)
     {
@@ -352,7 +361,8 @@ internal sealed class Il2CppTypeModel
         if (offsetInVtable < 0)
             return -1;
         if (offsetInVtable % 0x10 != 0 && offsetInVtable % 8 == 0)
-            offsetInVtable -= 8;        if (offsetInVtable < 0 || offsetInVtable % 0x10 != 0)
+            offsetInVtable -= 8;
+        if (offsetInVtable < 0 || offsetInVtable % 0x10 != 0)
             return -1;
         return offsetInVtable / 0x10;
     }
@@ -401,9 +411,11 @@ internal sealed class Il2CppTypeModel
         if (fullName == "System.Boolean")
             return ReturnKindBool;
         if (fullName == "System.Single" || fullName == "System.Double")
-            return ReturnKindScalarFloat;        if (_scalarIntPrimitives.Contains(fullName))
+            return ReturnKindScalarFloat;
+        if (_scalarIntPrimitives.Contains(fullName))
             return ReturnKindScalarInt;
-        try { if (t.BaseType?.FullName == "System.Enum") return ReturnKindScalarInt; } catch { }        return ReturnKindStruct;
+        try { if (t.BaseType?.FullName == "System.Enum") return ReturnKindScalarInt; } catch { }
+        return ReturnKindStruct;
     }
 
     private string[] GetVtableNames(TypeAnalysisContext type)
@@ -462,12 +474,14 @@ internal sealed class Il2CppTypeModel
                                 TypeAnalysisContext resolved = _app.ResolveIl2CppType(method.RawReturnType);
                                 kinds[i] = ClassifyReturn(resolved);
                                 if (resolved != null && !resolved.IsValueType)
-                                    returns[i] = resolved;                            }
+                                    returns[i] = resolved;
+                            }
                         }
                     }
                     else if (usage.Type == MetadataUsageType.MethodRef)
                     {
-                        names[i] = usage.AsGenericMethodRef()?.ToString();                    }
+                        names[i] = usage.AsGenericMethodRef()?.ToString();
+                    }
                 }
                 catch { }
             }
@@ -530,7 +544,8 @@ internal sealed class Il2CppTypeModel
                     if (scanned >= 5000 || candidates >= 1200)
                         goto done;
                     scanned++;
-                    int thisReg = IsReturnedViaHiddenPointer(method.ReturnType) ? 2 : 1;                    ScanMethodForVtable(method, thisReg, vtableCount, votes, ref candidates);
+                    int thisReg = IsReturnedViaHiddenPointer(method.ReturnType) ? 2 : 1;
+                    ScanMethodForVtable(method, thisReg, vtableCount, votes, ref candidates);
                 }
             }
         }
@@ -559,7 +574,8 @@ internal sealed class Il2CppTypeModel
 
         Decoder decoder = Decoder.Create(64, new ByteArrayCodeReader(bytes), method.UnderlyingPointer);
         ulong end = method.UnderlyingPointer + (ulong)bytes.Length;
-        int klassReg = -1;        int guard = 0;
+        int klassReg = -1;
+        int guard = 0;
         while (decoder.IP < end && guard++ < 8000)
         {
             decoder.Decode(out Instruction insn);
@@ -578,10 +594,12 @@ internal sealed class Il2CppTypeModel
                 && insn.MemoryIndex == Register.None && RegisterFlowUtil.GpIndex(insn.MemoryBase) == thisReg
                 && insn.MemoryDisplacement64 == 0)
             {
-                klassReg = RegisterFlowUtil.GpIndex(insn.Op0Register);            }
+                klassReg = RegisterFlowUtil.GpIndex(insn.Op0Register);
+            }
             else if (klassReg >= 0 && insn.Op0Kind == OpKind.Register && RegisterFlowUtil.GpIndex(insn.Op0Register) == klassReg)
             {
-                klassReg = -1;            }
+                klassReg = -1;
+            }
         }
     }
 
