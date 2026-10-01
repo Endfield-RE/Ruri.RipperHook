@@ -164,8 +164,10 @@ internal static class ShaderBinaries
         Stopwatch clock = Stopwatch.StartNew();
         List<ShaderMapInfo> maps = state.ShaderMaps;
         int map = 0;
+        int units = 0;
         while (map < maps.Count)
         {
+            units++;
             using (DataUnit unit = DataUnit.Begin())
             {
                 do
@@ -205,13 +207,13 @@ internal static class ShaderBinaries
                     }
                     map++;
                 }
-                while (map < maps.Count && unit.Held < ShaderMapIndex.BytesPerUnit);
+                while (map < maps.Count && (unit.Held < ShaderMapIndex.BytesPerUnit || ReadFromSameNamer(maps[map - 1], maps[map])));
             }
         }
 
         state.Log($"    Properties: populated {withProperties}/{maps.Count} shader-maps.");
         state.Log($"    RenderState: populated {withRenderState}/{maps.Count} shader-maps.");
-        state.Log($"    PrepareShaderBinaries: prepped {prepared.Count}/{wanted} binaries.");
+        state.Log($"    PrepareShaderBinaries: prepped {prepared.Count}/{wanted} binaries over {units} unit(s).");
 
         if (state.Metadata.ShaderTypes.HashToNameCount > 0)
         {
@@ -233,6 +235,17 @@ internal static class ShaderBinaries
             }
         }
     }
+
+    /// <summary>
+    /// Whether the next map's facts are read from the package the last map's were. A unit is
+    /// never ended between two such maps: a level that is the first namer of a run of maps -- a
+    /// landscape material instance each -- can hold more than a whole unit by itself, and ending
+    /// the unit after each of them read that level again, all of it, for every map it names.
+    /// </summary>
+    private static bool ReadFromSameNamer(ShaderMapInfo read, ShaderMapInfo next)
+        => read.Source is { } done
+           && next.Source is { } coming
+           && string.Equals(done.Named, coming.Named, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>One shader prepared, or null when its code could not be read or its preparation threw.</summary>
     private static PreparedShader? TryPrepare(ShaderSourceState state, ShaderLibrary lib, ShaderMapInfo map, int shaderIndex)
