@@ -8,33 +8,41 @@ using AssetRipper.Processing;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
 using Ruri.Hook.Attributes;
-using Ruri.RipperHook.Core;
+using Ruri.Hook.Core;
 
 namespace Ruri.RipperHook.HookUtils.ExportHandlerHook;
 
-public class ExportHandlerHook : CommonHook, IHookModule
+/// <summary>
+/// The export handler's processor pipeline with every active feature's processors spliced in. The splice is one
+/// hook every such feature shares, so it is installed once for the process rather than in any one feature's scope;
+/// a feature's registration lives in its own scope, and a feature leaving takes only that with it.
+/// </summary>
+public static class ExportHandlerHook
 {
     public delegate IEnumerable<IAssetProcessor> AssetProcessorDelegate(FullConfiguration settings);
 
     private static readonly List<AssetProcessorRegistration> Registrations = new();
+    private static bool installed;
 
     private static readonly PropertyInfo HandlerSettings = typeof(ExportHandler)
         .GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
         .Single(property => property.PropertyType == typeof(FullConfiguration));
 
-    public void OnApply()
-    {
-        Registry.ApplyTypeHooks(GetType());
-    }
-
     public static void Register(AssetProcessorRegistration registration)
     {
         ArgumentNullException.ThrowIfNull(registration);
-        if (Registrations.Any(existing => existing.Factory.Equals(registration.Factory)))
+        Registrations.Add(registration);
+        HookManager.RegisterCleanup(() => Registrations.Remove(registration));
+        if (installed)
         {
             return;
         }
-        Registrations.Add(registration);
+        installed = true;
+        HookManager.RunGlobal(() =>
+        {
+            HookManager.RegisterCleanup(() => installed = false);
+            new HookRegistry().ApplyTypeHooks(typeof(ExportHandlerHook));
+        });
     }
 
     [RetargetMethodFunc(typeof(ExportHandler))]

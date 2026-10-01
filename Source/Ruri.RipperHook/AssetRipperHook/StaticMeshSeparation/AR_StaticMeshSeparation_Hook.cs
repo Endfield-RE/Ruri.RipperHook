@@ -13,7 +13,6 @@ public partial class AR_StaticMeshSeparation_Hook : RipperHookCommon
 
     protected override void InitAttributeHook()
     {
-        RegisterModule(new ExportHandlerHook());
         ExportHandlerHook.Register(new AssetProcessorRegistration
         {
             InsertBefore = typeof(LightingDataProcessor),

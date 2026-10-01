@@ -36,6 +36,27 @@ namespace Ruri.Hook.Core
             }
         }
 
+        /// <summary>
+        /// Run <paramref name="action"/> outside every hook's scope: what it installs lives for the process. For
+        /// infrastructure several hooks share and none of them owns -- disposing whichever hook happened to install
+        /// it would take it from the others.
+        /// </summary>
+        public static void RunGlobal(Action action)
+        {
+            ArgumentNullException.ThrowIfNull(action);
+
+            string? previousScope = _currentScope.Value;
+            _currentScope.Value = null;
+            try
+            {
+                action();
+            }
+            finally
+            {
+                _currentScope.Value = previousScope;
+            }
+        }
+
         public static void Register(IDisposable hook)
         {
             ArgumentNullException.ThrowIfNull(hook);

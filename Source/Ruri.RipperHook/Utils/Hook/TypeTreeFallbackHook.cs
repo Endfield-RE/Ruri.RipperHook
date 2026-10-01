@@ -12,7 +12,6 @@ public class TypeTreeFallbackHook : CommonHook, IHookModule
 {
     public void OnApply()
     {
-        Registry.ApplyTypeHooks(GetType());
     }
 
     [RetargetMethod(typeof(TypeTreeNodeStruct), nameof(TryMakeFromTpk))]

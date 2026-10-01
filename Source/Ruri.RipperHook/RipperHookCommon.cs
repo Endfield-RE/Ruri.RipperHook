@@ -16,8 +16,6 @@ public abstract class RipperHookCommon : RuriHook
 {
     public delegate void ReadReleaseDelegate(object asset, ref EndianSpanReader reader);
 
-    private List<IHookModule> _modules = new();
-
     protected RipperHookCommon()
     {
     }
@@ -37,7 +35,6 @@ public abstract class RipperHookCommon : RuriHook
 
     protected void RegisterModule(IHookModule module)
     {
-        _modules.Add(module);
         module.OnApply();
         Registry.ApplyTypeHooks(module.GetType());
     }

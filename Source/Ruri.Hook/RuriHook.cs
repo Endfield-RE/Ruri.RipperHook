@@ -11,7 +11,6 @@ namespace Ruri.Hook
     public abstract class RuriHook
     {
         protected readonly HookRegistry Registry = new();
-        protected List<MethodInfo> methodHooks = new();
         private static readonly object LifecycleSyncRoot = new();
         private static readonly HashSet<string> ActiveHookIds = new(StringComparer.OrdinalIgnoreCase);
 
@@ -23,20 +22,6 @@ namespace Ruri.Hook
         protected virtual void InitAttributeHook()
         {
             Registry.ApplyTypeHooks(GetType());
-
-            if (methodHooks.Count > 0)
-            {
-                 Registry.ApplyManualHooks(methodHooks);
-            }
-        }
-
-        protected void AddMethodHook(Type type, string name)
-        {
-            var method = type.GetMethod(name, ReflectionExtensions.AnyBindFlag());
-            if (method != null)
-            {
-                methodHooks.Add(method);
-            }
         }
 
         protected void SetPrivateField(Type type, string name, object newValue)
