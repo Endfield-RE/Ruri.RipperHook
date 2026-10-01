@@ -55,10 +55,14 @@ public static class UnityAssetText
         return only;
     }
 
+    /// <summary>The texts of the named archives' own assets. Everything they depend on is loaded too -- a text
+    /// points at it -- but is not one of their texts: a scripted asset the archive merely references is another
+    /// archive's, and handing it over as well is what left a reader to tell the two apart by name.</summary>
     private static List<(string Path, string Text)> Read(CabTable map, IEnumerable<string> cabs,
         AssetReferences references)
     {
-        CabClosure closure = ClosureReader.Resolve(map, cabs, reachThroughDependents: true);
+        string[] own = cabs.ToArray();
+        CabClosure closure = ClosureReader.Resolve(map, own, reachThroughDependents: true);
         if (closure.Files.Length == 0)
         {
             return [];
@@ -67,7 +71,7 @@ public static class UnityAssetText
         settings.LoadFromDefaultPath();
         settings.ExportSettings.ShaderExportMode = ShaderExportMode.Dummy;
         settings.ImportSettings.ScriptContentLevel = ScriptContentLevel.Level0;
-        TextOnlyExportHandler handler = new(settings, references);
+        TextOnlyExportHandler handler = new(settings, references, new HashSet<string>(own, StringComparer.OrdinalIgnoreCase));
         GameData gameData = ClosureReader.Load(closure, handler);
         if (!gameData.GameBundle.HasAnyAssetCollections())
         {
@@ -88,25 +92,26 @@ public static class UnityAssetText
         return texts;
     }
 
-    /// <summary>Everything that is not a scripted asset or a game object tree is swallowed
-    /// before the default exporters see it: what this reads is designer-authored text, and
-    /// a prefab's own components ride inside the prefab's file.</summary>
-    private sealed class TextOnlyExportHandler(FullConfiguration settings, AssetReferences references)
-        : ExportHandler(settings)
+    /// <summary>Everything that is not a scripted asset or a game object tree of the named archives is swallowed
+    /// before the default exporters see it: what this reads is designer-authored text, and a prefab's own components
+    /// ride inside the prefab's file.</summary>
+    private sealed class TextOnlyExportHandler(FullConfiguration settings, AssetReferences references,
+        HashSet<string> own) : ExportHandler(settings)
     {
         protected override void BeforeExport(ProjectExporter projectExporter)
         {
-            projectExporter.OverrideExporter<IUnityObjectBase>(new DropExporter(references), allowInheritance: true);
+            projectExporter.OverrideExporter<IUnityObjectBase>(new DropExporter(references, own), allowInheritance: true);
         }
     }
 
-    private sealed class DropExporter(AssetReferences references) : IAssetExporter
+    private sealed class DropExporter(AssetReferences references, HashSet<string> own) : IAssetExporter
     {
         public bool TryCreateCollection(IUnityObjectBase asset, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IExportCollection? exportCollection)
         {
-            if (asset is AssetRipper.SourceGenerated.Classes.ClassID_1.IGameObject
-                or AssetRipper.SourceGenerated.Classes.ClassID_2.IComponent
-                or AssetRipper.SourceGenerated.Classes.ClassID_1001.IPrefabInstance)
+            if (own.Contains(asset.Collection.Name)
+                && asset is AssetRipper.SourceGenerated.Classes.ClassID_1.IGameObject
+                    or AssetRipper.SourceGenerated.Classes.ClassID_2.IComponent
+                    or AssetRipper.SourceGenerated.Classes.ClassID_1001.IPrefabInstance)
             {
                 exportCollection = null;
                 return false;

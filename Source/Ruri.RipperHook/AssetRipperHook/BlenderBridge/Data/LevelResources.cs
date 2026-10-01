@@ -84,11 +84,15 @@ public sealed class LevelResources
         long total = 0;
         for (int mip = 0; mip < mips; mip++)
         {
-            total += (long)Math.Max(1, width >> mip) * Math.Max(1, height >> mip)
-                     * (kind == BlockKind.Volume ? Math.Max(1, depth >> mip) : depth);
+            total += LevelSize(width, mip) * LevelSize(height, mip)
+                     * (kind == BlockKind.Volume ? LevelSize(depth, mip) : depth);
         }
         return total;
     }
+
+    /// <summary>One dimension at one mip. A level never shrinks below one texel -- but a block that
+    /// states none at all (a table of no records) holds none at every level.</summary>
+    public static long LevelSize(int size, int mip) => size == 0 ? 0 : Math.Max(1, size >> mip);
 
     public static int BytesPerChannel(TexelFormat format) => format switch
     {

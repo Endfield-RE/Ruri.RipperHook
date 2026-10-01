@@ -1,3 +1,5 @@
+using AssetRipper.Assets;
+using AssetRipper.SourceGenerated.Extensions;
 using AssetRipper.Export.Configuration;
 using AssetRipper.Export.UnityProjects;
 using AssetRipper.Import.Configuration;
@@ -69,4 +71,59 @@ public static class ClosureReader
     public static GameData Load(CabTable table, IEnumerable<string> seedCabNames) =>
         Read(table, seedCabNames) ?? throw new InvalidOperationException(
             "no files resolved for the requested CABs -- they are not in this cabmap.");
+
+    /// <summary>Every asset the closure of these archives holds. Naming no archive is a selection with
+    /// nothing in it -- a level that ships no decal, a stage with no cookie -- and reads nothing; naming
+    /// archives the map does not hold is still the mistake <see cref="Load(CabTable, IEnumerable{string})"/>
+    /// refuses.</summary>
+    public static IEnumerable<IUnityObjectBase> Assets(CabTable table, IReadOnlyCollection<string> seedCabNames) =>
+        seedCabNames.Count == 0 ? [] : Load(table, seedCabNames).GameBundle.FetchAssets();
+
+    /// <summary>The one <typeparamref name="T"/> each container path files: found in the archive the map files that
+    /// path in -- never elsewhere in its closure, where an engine default of the same name sits beside it -- and,
+    /// where that archive holds more than one, the one named as the path names it: the sub-asset after <c>##</c>,
+    /// else the file's own stem. An archive holding exactly one is answered by it whatever it is called now: an
+    /// asset renamed after it was filed keeps its old path. <paramref name="kind"/> is the sort of
+    /// <typeparamref name="T"/> the caller reads, where an archive files it with others of the same class (a
+    /// volume profile with the components it owns).</summary>
+    public static Dictionary<string, T> AssetsAt<T>(CabTable table, IReadOnlyCollection<string> paths,
+        Func<T, bool>? kind = null)
+        where T : class, IUnityObjectBase
+    {
+        Dictionary<string, string> cabOf = CabMap.CabsOf(table, paths);
+        HashSet<string> wanted = new(cabOf.Values, StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, List<T>> held = new(StringComparer.OrdinalIgnoreCase);
+        foreach (IUnityObjectBase asset in Assets(table, wanted.ToArray()))
+        {
+            if (asset is T typed && (kind is null || kind(typed)) && wanted.Contains(asset.Collection.Name))
+            {
+                if (!held.TryGetValue(asset.Collection.Name, out List<T>? inArchive))
+                {
+                    held[asset.Collection.Name] = inArchive = [];
+                }
+                inArchive.Add(typed);
+            }
+        }
+        Dictionary<string, T> found = new(StringComparer.OrdinalIgnoreCase);
+        foreach ((string path, string cab) in cabOf)
+        {
+            List<T> inArchive = held.GetValueOrDefault(cab) ?? [];
+            string name = NameIn(path);
+            T[] named = inArchive.Count == 1
+                ? [inArchive[0]]
+                : inArchive.Where(asset => string.Equals(asset.GetBestName(), name, StringComparison.OrdinalIgnoreCase)).ToArray();
+            found[path] = named.Length == 1
+                ? named[0]
+                : throw new InvalidDataException($"'{path}' resolves to {named.Length} {typeof(T).Name}(s) named "
+                    + $"'{name}' among the {inArchive.Count} its archive {cab} holds.");
+        }
+        return found;
+    }
+
+    /// <summary>The name a container path gives its asset: the sub-asset after <c>##</c>, else the file's stem.</summary>
+    private static string NameIn(string path)
+    {
+        int marker = path.IndexOf("##", StringComparison.Ordinal);
+        return marker >= 0 ? path[(marker + 2)..] : Path.GetFileNameWithoutExtension(path);
+    }
 }
