@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Threading;
 using CUE4Parse.Encryption.Aes;
 using CUE4Parse.FileProvider;
@@ -253,7 +252,6 @@ public static class Program
         Ruri.Hook.Core.HookCatalog.DeclareHost(typeof(Ruri.FModelHook.Attributes.FModelHookAttribute));
         _ = typeof(Ruri.FModelHook.GameType);
         _ = typeof(Ruri.FModelHook.ShaderDecompiler.UE_ShaderDecompiler_Hook);
-        try { Assembly.Load("Ruri.FModelHook"); } catch {}
 
         int hookCount = Ruri.Hook.Core.HookCatalog.Decoders.Count;
         HookLogger.Log($"[Ruri.FModelHook.CLI] Hook assemblies loaded — discovered {hookCount} [GameHookAttribute] type(s).");

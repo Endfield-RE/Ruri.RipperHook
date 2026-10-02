@@ -36,18 +36,14 @@ internal sealed class HashNameIndex
         string needle = $"/{subfolder}/_HashToName.json";
         foreach (string versionRoot in versionRoots)
         {
-            try
+            foreach (string f in Directory.EnumerateFiles(versionRoot, "_HashToName.json", SearchOption.AllDirectories))
             {
-                foreach (string f in Directory.EnumerateFiles(versionRoot, "_HashToName.json", SearchOption.AllDirectories))
+                if (f.Replace('\\', '/').EndsWith(needle, StringComparison.OrdinalIgnoreCase)
+                    && !scanRoots.Contains(Path.GetDirectoryName(f)!, StringComparer.OrdinalIgnoreCase))
                 {
-                    if (f.Replace('\\', '/').EndsWith(needle, StringComparison.OrdinalIgnoreCase)
-                        && !scanRoots.Contains(Path.GetDirectoryName(f)!, StringComparer.OrdinalIgnoreCase))
-                    {
-                        scanRoots.Add(Path.GetDirectoryName(f)!);
-                    }
+                    scanRoots.Add(Path.GetDirectoryName(f)!);
                 }
             }
-            catch {}
         }
 
         Dictionary<ulong, string> hashToName = new();

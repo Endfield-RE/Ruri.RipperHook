@@ -95,14 +95,10 @@ internal sealed class ShaderTypeSeedRegistry
             string indexPath = Path.Combine(root, root.EndsWith("_ShaderType", StringComparison.OrdinalIgnoreCase) ? "_HashToName.json" : Path.Combine("_ShaderType", "_HashToName.json"));
             List<string> indexCandidates = new();
             if (File.Exists(indexPath)) indexCandidates.Add(indexPath);
-            try
+            foreach (string f in Directory.EnumerateFiles(root, "_HashToName.json", SearchOption.AllDirectories))
             {
-                foreach (string f in Directory.EnumerateFiles(root, "_HashToName.json", SearchOption.AllDirectories))
-                {
-                    if (!indexCandidates.Contains(f, StringComparer.OrdinalIgnoreCase)) indexCandidates.Add(f);
-                }
+                if (!indexCandidates.Contains(f, StringComparer.OrdinalIgnoreCase)) indexCandidates.Add(f);
             }
-            catch {}
 
             foreach (string idx in indexCandidates)
             {
