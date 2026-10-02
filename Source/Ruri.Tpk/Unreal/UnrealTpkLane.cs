@@ -58,6 +58,7 @@ internal static class UnrealTpkLane
             manifest.Lineages.Add(new TypeTreeManifest.LineageEntry
             {
                 Key = key,
+                UnityNames = key,
                 Versions = [new TypeTreeManifest.VersionEntry { Key = UsmapTypeTreeBuilder.VersionKey, Engine = layoutVersion }],
             });
             Console.WriteLine($"[Unreal]   blob {key}: {builder.Blobs[part].ClassInformation.Count} classes, {builder.Blobs[part].NodeBuffer.Count} nodes");

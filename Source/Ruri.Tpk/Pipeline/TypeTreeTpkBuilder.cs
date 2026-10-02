@@ -14,6 +14,7 @@ namespace Ruri.Tpk.Pipeline;
 internal static class TypeTreeTpkBuilder
 {
     private const string CommonDirectoryName = "Common";
+    private const string UnityNamesSuffix = ".unity";
 
     public static void WriteFromDumpRoot(string dumpRoot, string outputPath)
     {
@@ -31,14 +32,15 @@ internal static class TypeTreeTpkBuilder
             chain.AddRange(lineage.EngineChain);
             chain.AddRange(lineage.GameChain);
 
-            TpkTypeTreeBlob blob = BuildLineageBlob(chain, lineage.EngineChain.Count);
+            TpkTypeTreeBlob unityNames = BuildLineageBlob(chain, lineage.EngineChain.Count);
+            string unityNamesKey = lineage.Key + UnityNamesSuffix;
 
-            blob = TypeTreeRenamer.ApplyAssetRipperRenaming(blob);
-
-            collection.Add(lineage.Key, blob);
+            collection.Add(lineage.Key, TypeTreeRenamer.ApplyAssetRipperRenaming(unityNames));
+            collection.Add(unityNamesKey, unityNames);
             manifest.Lineages.Add(new TypeTreeManifest.LineageEntry
             {
                 Key = lineage.Key,
+                UnityNames = unityNamesKey,
                 Versions = chain.ConvertAll(snapshot => new TypeTreeManifest.VersionEntry
                 {
                     Key = snapshot.VersionKey,
