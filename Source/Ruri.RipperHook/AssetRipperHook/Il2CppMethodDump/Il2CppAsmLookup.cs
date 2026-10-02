@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using AssetRipper.Import.Logging;
 using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Model.Contexts;
 using ICSharpCode.Decompiler.TypeSystem;
@@ -71,8 +73,10 @@ internal static class Il2CppAsmLookup
                     : Il2CppAsmAnnotator.Annotate(app, app.InstructionSet.PrintAssembly(ctx));
                 return $"VA=0x{ctx.UnderlyingPointer:X}  RVA=0x{ctx.Rva:X}\n{asm}";
             }
-            catch
+            catch (Exception exception)
             {
+                Logger.Warning(LogCategory.Export, $"[Il2CppMethodDump] no listing for {ctx.FullName} at 0x{ctx.UnderlyingPointer:X}: "
+                    + Il2CppX86Listing.Describe(exception));
                 return null;
             }
         }

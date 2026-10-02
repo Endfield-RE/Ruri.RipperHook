@@ -1,5 +1,7 @@
 extern alias icedreal;
+using System;
 using System.Collections.Generic;
+using AssetRipper.Import.Logging;
 using Cpp2IL.Core.Model.Contexts;
 using LibCpp2IL;
 using icedreal::Iced.Intel;
@@ -29,31 +31,34 @@ internal static class Il2CppX86Listing
         if (!ReferenceEquals(_condemnationApp, app)) { _condemnationApp = app; _condemnationScanned.Clear(); }
         AssemblyAnalysisContext assembly = current.DeclaringType?.DeclaringAssembly;
         if (assembly == null || !_condemnationScanned.Add(assembly)) return;
-        try
+        bool is32 = app.Binary.is32Bit;
+        foreach (TypeAnalysisContext type in assembly.Types)
         {
-            bool is32 = LibCpp2IlMain.Binary.is32Bit;
+            foreach (MethodAnalysisContext method in type.Methods)
             {
-                foreach (TypeAnalysisContext type in assembly.Types)
+                if (method.UnderlyingPointer == 0) continue;
+                try
                 {
-                    foreach (MethodAnalysisContext method in type.Methods)
-                    {
-                        if (method.UnderlyingPointer == 0) continue;
-                        try
-                        {
-                            method.EnsureRawBytes();
-                            byte[] bytes = method.RawBytes.ToArray();
-                            if (bytes.Length == 0) continue;
-                            List<Instruction> insns = DecodeInstructions(bytes, method.UnderlyingPointer, is32);
-                            if (insns.Count == 0) continue;
-                            new Il2CppRegisterFlow(app, method, insns, model).Analyze();
-                        }
-                        catch { }
-                    }
+                    method.EnsureRawBytes();
+                    byte[] bytes = method.RawBytes.ToArray();
+                    if (bytes.Length == 0) continue;
+                    List<Instruction> insns = DecodeInstructions(bytes, method.UnderlyingPointer, is32);
+                    if (insns.Count == 0) continue;
+                    new Il2CppRegisterFlow(app, method, insns, model).Analyze();
+                }
+                catch (Exception exception)
+                {
+                    Logger.Warning(LogCategory.Export,
+                        $"[Il2CppMethodDump] {method.FullName} is left out of the vtable consistency scan: {Describe(exception)}");
                 }
             }
         }
-        catch { }
     }
+
+    /// <summary>One line saying what went wrong and where it was thrown -- what the dump states about an item it
+    /// has to leave out.</summary>
+    internal static string Describe(Exception exception) =>
+        $"{exception.GetType().Name} in {exception.TargetSite?.DeclaringType?.Name}.{exception.TargetSite?.Name}: {exception.Message}";
 
     public static string Render(ApplicationAnalysisContext app, MethodAnalysisContext method)
     {
@@ -63,7 +68,7 @@ internal static class Il2CppX86Listing
 
         ulong start = method.UnderlyingPointer;
         ulong end = start + (ulong)bytes.Length;
-        bool is32 = LibCpp2IlMain.Binary.is32Bit;
+        bool is32 = app.Binary.is32Bit;
 
         List<Instruction> instructions = DecodeInstructions(bytes, start, is32);
 
@@ -78,7 +83,7 @@ internal static class Il2CppX86Listing
         }
 
         Dictionary<ulong, string> overrides = DetectMetadataInitIdiom(app, instructions);
-        DetectIcallCacheIdiom(instructions, ref overrides);
+        DetectIcallCacheIdiom(app, instructions, ref overrides);
 
         Dictionary<ulong, Il2CppAsmAnnotator.DataConstantOperand> dataConstants = CollectDataConstants(instructions);
 
@@ -154,7 +159,8 @@ internal static class Il2CppX86Listing
             || instruction.MemoryBase == Register.RIP
             || instruction.MemoryBase == Register.EIP);
 
-    private static void DetectIcallCacheIdiom(List<Instruction> instructions, ref Dictionary<ulong, string> overrides)
+    private static void DetectIcallCacheIdiom(ApplicationAnalysisContext app, List<Instruction> instructions,
+        ref Dictionary<ulong, string> overrides)
     {
         for (int i = 0; i < instructions.Count; i++)
         {
@@ -162,7 +168,7 @@ internal static class Il2CppX86Listing
             if (lea.Mnemonic != Mnemonic.Lea || lea.Op1Kind != OpKind.Memory || lea.MemoryIndex != Register.None
                 || (lea.MemoryBase != Register.None && lea.MemoryBase != Register.RIP && lea.MemoryBase != Register.EIP))
                 continue;
-            string signature = Il2CppAsmAnnotator.ReadCString(lea.MemoryDisplacement64);
+            string signature = Il2CppAsmAnnotator.ReadCString(app, lea.MemoryDisplacement64);
             if (signature == null || !signature.Contains("::"))
                 continue;
             ulong slot = 0;
@@ -260,76 +266,70 @@ internal static class Il2CppX86Listing
     public static Dictionary<ulong, string> TraceRuntimeGlobals(ApplicationAnalysisContext app)
     {
         Dictionary<ulong, string> map = new();
-        try
+        var binary = app.Binary;
+        ulong initVa = binary.GetVirtualAddressOfExportedFunctionByName("il2cpp_init");
+        if (initVa == 0) return map;
+        int bitness = binary.is32Bit ? 32 : 64;
+
+        HashSet<ulong> visited = new();
+        Queue<ulong> queue = new();
+        queue.Enqueue(initVa);
+        List<List<Instruction>> functions = new();
+        int budget = 0;
+        while (queue.Count > 0 && budget < 20000)
         {
-            var binary = LibCpp2IlMain.Binary;
-            if (binary == null) return map;
-            ulong initVa = binary.GetVirtualAddressOfExportedFunctionByName("il2cpp_init");
-            if (initVa == 0) return map;
-            int bitness = binary.is32Bit ? 32 : 64;
+            ulong funcVa = queue.Dequeue();
+            if (!visited.Add(funcVa)) continue;
+            budget++;
+            long off = binary.MapVirtualAddressToRaw(funcVa, false);
+            if (off < 0) continue;
+            byte[] code = binary.ReadByteArrayAtRawAddress(off, 0x4000);
+            if (code == null || code.Length == 0) continue;
 
-            HashSet<ulong> visited = new();
-            Queue<ulong> queue = new();
-            queue.Enqueue(initVa);
-            List<List<Instruction>> functions = new();
-            int budget = 0;
-            while (queue.Count > 0 && budget < 20000)
+            ByteArrayCodeReader reader = new(code);
+            Decoder decoder = Decoder.Create(bitness, reader, funcVa);
+            List<Instruction> insns = new(128);
+            int guard = 0;
+            while (guard++ < 4000)
             {
-                ulong funcVa = queue.Dequeue();
-                if (!visited.Add(funcVa)) continue;
-                budget++;
-                long off = binary.MapVirtualAddressToRaw(funcVa, false);
-                if (off < 0) continue;
-                byte[] code;
-                try { code = binary.ReadByteArrayAtRawAddress(off, 0x4000); }
-                catch { continue; }
-                if (code == null || code.Length == 0) continue;
-
-                ByteArrayCodeReader reader = new(code);
-                Decoder decoder = Decoder.Create(bitness, reader, funcVa);
-                List<Instruction> insns = new(128);
-                int guard = 0;
-                while (guard++ < 4000)
+                decoder.Decode(out Instruction ins);
+                if (ins.IsInvalid) break;
+                insns.Add(ins);
+                if ((ins.Mnemonic == Mnemonic.Call || ins.Mnemonic == Mnemonic.Jmp)
+                    && ins.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32)
                 {
-                    decoder.Decode(out Instruction ins);
-                    if (ins.IsInvalid) break;
-                    insns.Add(ins);
-                    if ((ins.Mnemonic == Mnemonic.Call || ins.Mnemonic == Mnemonic.Jmp)
-                        && ins.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32)
-                    {
-                        ulong target = ins.NearBranchTarget;
-                        if (!visited.Contains(target) && visited.Count + queue.Count < 20000) queue.Enqueue(target);
-                    }
-                    if (ins.Mnemonic == Mnemonic.Ret || ins.Mnemonic == Mnemonic.Int3) break;
+                    ulong target = ins.NearBranchTarget;
+                    if (!visited.Contains(target) && visited.Count + queue.Count < 20000) queue.Enqueue(target);
                 }
-                functions.Add(insns);
+                if (ins.Mnemonic == Mnemonic.Ret || ins.Mnemonic == Mnemonic.Int3) break;
             }
+            functions.Add(insns);
+        }
 
-            ulong headerSlot = 0;
+        ulong headerSlot = 0;
+        foreach (List<Instruction> insns in functions)
+        {
+            if (TryFindMetadataPair(insns, out ulong slotBase, out ulong slotHeader))
+            {
+                map[slotBase] = "s_GlobalMetadata";
+                map[slotHeader] = "s_GlobalMetadataHeader";
+                headerSlot = slotHeader;
+                break;
+            }
+        }
+        if (headerSlot != 0)
+        {
             foreach (List<Instruction> insns in functions)
             {
-                if (TryFindMetadataPair(insns, out ulong slotBase, out ulong slotHeader))
+                if (TryFindStringLiteralCache(insns, headerSlot, out ulong slotCache))
                 {
-                    map[slotBase] = "s_GlobalMetadata";
-                    map[slotHeader] = "s_GlobalMetadataHeader";
-                    headerSlot = slotHeader;
+                    map[slotCache] = "s_StringLiteralTable";
                     break;
                 }
             }
-            if (headerSlot != 0)
-            {
-                foreach (List<Instruction> insns in functions)
-                {
-                    if (TryFindStringLiteralCache(insns, headerSlot, out ulong slotCache))
-                    {
-                        map[slotCache] = "s_StringLiteralTable";
-                        break;
-                    }
-                }
-            }
-            System.Console.WriteLine($"    [+] AR_Il2CppMethodDump: traced {map.Count} il2cpp runtime global(s) from il2cpp_init: {string.Join(", ", map.Values)}");
         }
-        catch { }
+        Logger.Info(LogCategory.Export,
+            $"[Il2CppMethodDump] traced {map.Count} il2cpp runtime global(s) from il2cpp_init: {string.Join(", ", map.Values)}");
         return map;
     }
 

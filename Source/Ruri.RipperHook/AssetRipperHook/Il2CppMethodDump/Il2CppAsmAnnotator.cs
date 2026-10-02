@@ -251,43 +251,42 @@ internal static class Il2CppAsmAnnotator
 
     private static string ResolveGlobal(ulong addr)
     {
-        try
+        if (!HoldsPointer(_app.Binary, addr))
+            return null;
+        string literal = _app.LibCpp2IlContext.GetLiteralByAddress(addr);
+        if (literal != null) return "\"" + Escape(literal) + "\"";
+        MetadataUsage usage = _app.LibCpp2IlContext.GetAnyGlobalByAddress(addr);
+        if (usage != null)
         {
-            string literal = LibCpp2IlMain.GetLiteralByAddress(addr);
-            if (literal != null) return "\"" + Escape(literal) + "\"";
-        }
-        catch { }
-        try
-        {
-            MetadataUsage usage = LibCpp2IlMain.GetAnyGlobalByAddress(addr);
-            if (usage != null)
+            switch (usage.Type)
             {
-                switch (usage.Type)
-                {
-                    case MetadataUsageType.MethodDef:
-                        string methodKey = usage.AsMethod()?.GlobalKey;
-                        if (methodKey != null) return methodKey;
-                        break;
-                    case MetadataUsageType.MethodRef:
-                        string genericKey = usage.AsGenericMethodRef()?.ToString();
-                        if (genericKey != null) return genericKey;
-                        break;
-                    case MetadataUsageType.FieldInfo:
-                        Il2CppFieldDefinition field = usage.AsField();
-                        if (field?.DeclaringType != null && field.Name != null)
-                            return field.DeclaringType.Name + "::" + field.Name;
-                        break;
-                }
-                if (usage.Value != null)
-                {
-                    string value = usage.Value.ToString();
-                    return usage.Type.ToString().Contains("Type") ? value + "_TypeInfo" : value;
-                }
+                case MetadataUsageType.MethodDef:
+                    string methodKey = usage.AsMethod()?.GlobalKey;
+                    if (methodKey != null) return methodKey;
+                    break;
+                case MetadataUsageType.MethodRef:
+                    string genericKey = usage.AsGenericMethodRef()?.ToString();
+                    if (genericKey != null) return genericKey;
+                    break;
+                case MetadataUsageType.FieldInfo:
+                    Il2CppFieldDefinition field = usage.AsField();
+                    if (field?.DeclaringType != null && field.Name != null)
+                        return field.DeclaringType.Name + "::" + field.Name;
+                    break;
+            }
+            if (usage.Value != null)
+            {
+                string value = usage.Value.ToString();
+                return usage.Type.ToString().Contains("Type") ? value + "_TypeInfo" : value;
             }
         }
-        catch { }
         return null;
     }
+
+    /// <summary>Whether a pointer-sized global can sit at this address inside the image. A metadata usage slot is
+    /// one; asked about an address whose pointer would run off the end of the image, the library reads past it.</summary>
+    internal static bool HoldsPointer(Il2CppBinary binary, ulong address) =>
+        binary.TryMapVirtualAddressToRaw(address, out long raw) && raw + (binary.is32Bit ? 4 : 8) <= binary.RawLength;
 
     private static string ResolveDataAddress(ulong addr)
     {
@@ -311,20 +310,17 @@ internal static class Il2CppAsmAnnotator
         return "g_" + addr.ToString("X");
     }
 
-    internal static string ReadCString(ulong virtualAddress) => TryReadCString(virtualAddress);
+    internal static string ReadCString(ApplicationAnalysisContext app, ulong virtualAddress)
+    {
+        EnsureMaps(app);
+        return TryReadCString(virtualAddress);
+    }
 
     private static string TryReadCString(ulong virtualAddress)
     {
-        Il2CppBinary binary = LibCpp2IlMain.Binary;
-        if (binary == null)
+        Il2CppBinary binary = _app.Binary;
+        if (!binary.TryMapVirtualAddressToRaw(virtualAddress, out long raw))
             return null;
-        long raw;
-        try
-        {
-            if (!binary.TryMapVirtualAddressToRaw(virtualAddress, out raw))
-                return null;
-        }
-        catch { return null; }
         if (raw < 0 || raw >= binary.RawLength)
             return null;
 
@@ -333,9 +329,7 @@ internal static class Il2CppAsmAnnotator
         {
             if (raw + i >= binary.RawLength)
                 return null;
-            byte ch;
-            try { ch = binary.GetByteAtRawAddress((ulong)(raw + i)); }
-            catch { return null; }
+            byte ch = binary.GetByteAtRawAddress((ulong)(raw + i));
             if (ch == 0)
                 break;
             if (ch < 0x20 || ch > 0x7E)
@@ -347,26 +341,17 @@ internal static class Il2CppAsmAnnotator
 
     private static string TryResolveCodePointer(ulong slotAddress)
     {
-        Il2CppBinary binary = LibCpp2IlMain.Binary;
-        if (binary == null || binary.is32Bit)
+        Il2CppBinary binary = _app.Binary;
+        if (binary.is32Bit)
             return null;
-        long raw;
-        try
-        {
-            if (!binary.TryMapVirtualAddressToRaw(slotAddress, out raw))
-                return null;
-        }
-        catch { return null; }
+        if (!binary.TryMapVirtualAddressToRaw(slotAddress, out long raw))
+            return null;
         if (raw < 0 || raw + 8 > binary.RawLength)
             return null;
 
         ulong target = 0;
-        try
-        {
-            for (int i = 7; i >= 0; i--)
-                target = (target << 8) | binary.GetByteAtRawAddress((ulong)(raw + i));
-        }
-        catch { return null; }
+        for (int i = 7; i >= 0; i--)
+            target = (target << 8) | binary.GetByteAtRawAddress((ulong)(raw + i));
         if (target < 0x10000 || ClassifyAddress(target, out _) != AddressKind.Code)
             return null;
 
@@ -381,33 +366,21 @@ internal static class Il2CppAsmAnnotator
 
     private static string TryReadDataConstant(ulong virtualAddress, in DataConstantOperand operand)
     {
-        Il2CppBinary binary = LibCpp2IlMain.Binary;
-        if (binary == null)
-            return null;
-
+        Il2CppBinary binary = _app.Binary;
         int total = operand.ElementSize * operand.ElementCount;
         if (total <= 0 || total > 64)            return null;
 
-        long raw;
-        try
-        {
-            if (!binary.TryMapVirtualAddressToRaw(virtualAddress, out raw))
-                return null;
-        }
-        catch { return null; }
+        if (!binary.TryMapVirtualAddressToRaw(virtualAddress, out long raw))
+            return null;
         if (raw < 0 || raw + total > binary.RawLength)
             return null;
 
         Span<byte> buffer = stackalloc byte[64];
         Span<byte> bytes = buffer.Slice(0, total);
-        try
+        for (int i = 0; i < total; i++)
         {
-            for (int i = 0; i < total; i++)
-            {
-                bytes[i] = binary.GetByteAtRawAddress((ulong)(raw + i));
-            }
+            bytes[i] = binary.GetByteAtRawAddress((ulong)(raw + i));
         }
-        catch { return null; }
 
         return operand.ElementCount == 1
             ? FormatElement(bytes, operand.IsFloatElement, operand.ElementSize)
@@ -519,105 +492,84 @@ internal static class Il2CppAsmAnnotator
         return AddressKind.Unknown;
     }
 
-    private static void ParsePeSections()
+    private static void ParsePeSections(ApplicationAnalysisContext app)
     {
         _sections = null;
         _imageBase = 0;
-        try
+        Il2CppBinary binary = app.Binary;
+
+        long rawLength = binary.RawLength;
+        int headerLength = (int)System.Math.Min(rawLength, 16384L);
+        if (headerLength < 0x200) return;
+
+        Span<byte> header = stackalloc byte[16384];
+        header = header.Slice(0, headerLength);
+        for (int i = 0; i < headerLength; i++)
         {
-            Il2CppBinary binary = LibCpp2IlMain.Binary;
-            if (binary == null) return;
-
-            long rawLength = binary.RawLength;
-            int headerLength = (int)System.Math.Min(rawLength, 16384L);
-            if (headerLength < 0x200) return;
-
-            Span<byte> header = stackalloc byte[16384];
-            header = header.Slice(0, headerLength);
-            for (int i = 0; i < headerLength; i++)
-            {
-                header[i] = binary.GetByteAtRawAddress((ulong)i);
-            }
-
-            if (header[0] != (byte)'M' || header[1] != (byte)'Z') return;
-            int pe = BinaryPrimitives.ReadInt32LittleEndian(header.Slice(0x3C));
-            if (pe <= 0 || pe + 0x18 > headerLength) return;
-            if (header[pe] != (byte)'P' || header[pe + 1] != (byte)'E') return;
-
-            int coff = pe + 4;
-            ushort sectionCount = BinaryPrimitives.ReadUInt16LittleEndian(header.Slice(coff + 2));
-            ushort optionalSize = BinaryPrimitives.ReadUInt16LittleEndian(header.Slice(coff + 16));
-            int optional = coff + 20;
-            ushort magic = BinaryPrimitives.ReadUInt16LittleEndian(header.Slice(optional));
-            _imageBase = magic == 0x20b
-                ? BinaryPrimitives.ReadUInt64LittleEndian(header.Slice(optional + 24))                : BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(optional + 28));
-            int tableStart = optional + optionalSize;
-            if (sectionCount == 0 || sectionCount > 96 || tableStart + sectionCount * 40 > headerLength) return;
-
-            PeSection[] parsed = new PeSection[sectionCount];
-            for (int i = 0; i < sectionCount; i++)
-            {
-                int s = tableStart + i * 40;
-                uint virtualSize = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 8));
-                uint virtualAddress = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 12));
-                uint rawSize = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 16));
-                uint characteristics = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 36));
-                bool executable = (characteristics & 0x20000000u) != 0;
-                bool writable = (characteristics & 0x80000000u) != 0;
-                parsed[i] = new PeSection(virtualAddress, virtualAddress + virtualSize, virtualAddress + rawSize, executable, writable);
-            }
-            _sections = parsed;
+            header[i] = binary.GetByteAtRawAddress((ulong)i);
         }
-        catch
+
+        if (header[0] != (byte)'M' || header[1] != (byte)'Z') return;
+        int pe = BinaryPrimitives.ReadInt32LittleEndian(header.Slice(0x3C));
+        if (pe <= 0 || pe + 0x18 > headerLength) return;
+        if (header[pe] != (byte)'P' || header[pe + 1] != (byte)'E') return;
+
+        int coff = pe + 4;
+        ushort sectionCount = BinaryPrimitives.ReadUInt16LittleEndian(header.Slice(coff + 2));
+        ushort optionalSize = BinaryPrimitives.ReadUInt16LittleEndian(header.Slice(coff + 16));
+        int optional = coff + 20;
+        if (optional + 32 > headerLength) return;
+        ushort magic = BinaryPrimitives.ReadUInt16LittleEndian(header.Slice(optional));
+        _imageBase = magic == 0x20b
+            ? BinaryPrimitives.ReadUInt64LittleEndian(header.Slice(optional + 24))                : BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(optional + 28));
+        int tableStart = optional + optionalSize;
+        if (sectionCount == 0 || sectionCount > 96 || tableStart + sectionCount * 40 > headerLength) return;
+
+        PeSection[] parsed = new PeSection[sectionCount];
+        for (int i = 0; i < sectionCount; i++)
         {
-            _sections = null;
+            int s = tableStart + i * 40;
+            uint virtualSize = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 8));
+            uint virtualAddress = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 12));
+            uint rawSize = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 16));
+            uint characteristics = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(s + 36));
+            bool executable = (characteristics & 0x20000000u) != 0;
+            bool writable = (characteristics & 0x80000000u) != 0;
+            parsed[i] = new PeSection(virtualAddress, virtualAddress + virtualSize, virtualAddress + rawSize, executable, writable);
         }
+        _sections = parsed;
     }
 
     private static void EnsureMaps(ApplicationAnalysisContext app)
     {
         if (ReferenceEquals(_app, app) && _keyFunctions != null) return;
         Dictionary<ulong, string> map = new();
-        try
+        object kfa = app.GetOrCreateKeyFunctionAddresses();
+        foreach (FieldInfo f in kfa.GetType().GetFields(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy))
         {
-            object kfa = app.GetOrCreateKeyFunctionAddresses();
-            foreach (FieldInfo f in kfa.GetType().GetFields(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy))
+            if (f.FieldType == typeof(ulong))
             {
-                if (f.FieldType == typeof(ulong))
-                {
-                    ulong v = (ulong)f.GetValue(kfa);
-                    if (v != 0) map[v] = f.Name;
-                }
+                ulong v = (ulong)f.GetValue(kfa);
+                if (v != 0) map[v] = f.Name;
             }
         }
-        catch { }
         _keyFunctions = map;
 
         Dictionary<ulong, string> exports = new();
-        try
+        foreach (KeyValuePair<string, ulong> kv in app.Binary.GetExportedFunctions())
         {
-            object binary = LibCpp2IlMain.Binary;
-            System.Type binaryType = binary.GetType();
-            binaryType.GetMethod("LoadPeExportTable")?.Invoke(binary, null);
-            if (binaryType.GetMethod("GetExportedFunctions")?.Invoke(binary, null) is System.Collections.IEnumerable seq)
+            if (kv.Value != 0 && !exports.ContainsKey(kv.Value))
             {
-                foreach (object entry in seq)
-                {
-                    if (entry is KeyValuePair<string, ulong> kv && kv.Value != 0 && !exports.ContainsKey(kv.Value))
-                    {
-                        exports[kv.Value] = kv.Key;
-                    }
-                }
+                exports[kv.Value] = kv.Key;
             }
         }
-        catch { }
         _exports = exports;
 
         _sortedMethodStarts = app.MethodsByAddress.Keys.Where(k => k != 0).OrderBy(k => k).ToArray();
         _globalCache.Clear();
         _dataCache.Clear();
-        ParsePeSections();
+        ParsePeSections(app);
         _runtimeGlobals = Il2CppX86Listing.TraceRuntimeGlobals(app);
         _app = app;
     }

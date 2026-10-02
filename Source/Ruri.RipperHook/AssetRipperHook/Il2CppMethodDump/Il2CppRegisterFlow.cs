@@ -106,21 +106,14 @@ internal sealed class Il2CppRegisterFlow
         int n = _instructions.Count;
         if (n == 0 || n > InstructionBudget)
             return;
-        try
-        {
-            for (int i = 0; i < n; i++)
-                _indexByIp[_instructions[i].IP] = i;
+        for (int i = 0; i < n; i++)
+            _indexByIp[_instructions[i].IP] = i;
 
-            BuildBlocks();
-            PrecomputeClobbers();
-            RunDataflow();
-            EmitComments();
-            RetractInconsistentArrows();
-        }
-        catch
-        {
-            _comments = null;
-        }
+        BuildBlocks();
+        PrecomputeClobbers();
+        RunDataflow();
+        EmitComments();
+        RetractInconsistentArrows();
     }
 
     private void BuildBlocks()
@@ -478,12 +471,8 @@ internal sealed class Il2CppRegisterFlow
     {
         if (a == null || b == null || a.Definition == null || b.Definition == null)
             return false;
-        try
-        {
-            if (a.IsValueType || b.IsValueType || a.IsInterface || b.IsInterface)
-                return false;
-        }
-        catch { return false; }
+        if (a.IsValueType || b.IsValueType || a.IsInterface || b.IsInterface)
+            return false;
         if (a.FullName == "System.Object" || b.FullName == "System.Object")
             return false;
         return !IsSameOrBase(a, b) && !IsSameOrBase(b, a);
@@ -496,8 +485,7 @@ internal sealed class Il2CppRegisterFlow
             if (ReferenceEquals(t.Definition, baseCandidate.Definition)
                 || (t.FullName != null && t.FullName == baseCandidate.FullName))
                 return true;
-            try { t = t.BaseType; }
-            catch { return false; }
+            t = t.BaseType;
         }
         return false;
     }

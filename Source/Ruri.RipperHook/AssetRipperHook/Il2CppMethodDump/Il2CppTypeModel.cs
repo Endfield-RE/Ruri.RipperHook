@@ -76,22 +76,20 @@ internal sealed class Il2CppTypeModel
     public bool TryGetTypeForTypeInfoGlobal(ulong globalAddress, out TypeAnalysisContext type)
     {
         type = null;
-        try
-        {
-            MetadataUsage usage = LibCpp2IlMain.GetAnyGlobalByAddress(globalAddress);
-            if (usage == null)
-                return false;
-            if (usage.Type != MetadataUsageType.TypeInfo && usage.Type != MetadataUsageType.Type)
-                return false;
-            Il2CppTypeDefinition definition = usage.AsType()?.CoerceToUnderlyingTypeDefinition();
-            if (definition == null)
-                return false;
-            return _byDefinition.TryGetValue(definition, out type);
-        }
-        catch
-        {
+        if (!Il2CppAsmAnnotator.HoldsPointer(_app.Binary, globalAddress))
             return false;
-        }
+        MetadataUsage usage = _app.LibCpp2IlContext.GetAnyGlobalByAddress(globalAddress);
+        if (usage == null)
+            return false;
+        if (usage.Type != MetadataUsageType.TypeInfo && usage.Type != MetadataUsageType.Type)
+            return false;
+        Il2CppType global = usage.AsType();
+        if (global == null || global.ThisOrElementIsGenericParam())
+            return false;
+        Il2CppTypeDefinition definition = global.CoerceToUnderlyingTypeDefinition();
+        if (definition == null)
+            return false;
+        return _byDefinition.TryGetValue(definition, out type);
     }
 
     public bool IsReturnedViaHiddenPointer(TypeAnalysisContext returnType)
@@ -113,9 +111,7 @@ internal sealed class Il2CppTypeModel
         {
             if (field.IsStatic)
                 continue;
-            int offset;
-            try { offset = field.Offset; }
-            catch { continue; }
+            int offset = field.Offset;
             if (offset < 0)
                 continue;
             int end = offset + PrimitiveSize(field.FieldType, depth + 1);
@@ -229,9 +225,7 @@ internal sealed class Il2CppTypeModel
                 continue;
             if ((field.Attributes & System.Reflection.FieldAttributes.Literal) != 0)
                 continue;
-            int offset;
-            try { offset = field.Offset; }
-            catch { continue; }
+            int offset = field.Offset;
             if (offset < 0 || (offset == 0 && !allowZeroOffset))
                 continue;
             map.TryAdd(offset, field);
@@ -279,13 +273,8 @@ internal sealed class Il2CppTypeModel
 
     private void ScanMethodForStaticIdiom(MethodAnalysisContext method, Dictionary<int, int> confirmed, ref int confirmations)
     {
-        byte[] bytes;
-        try
-        {
-            method.EnsureRawBytes();
-            bytes = method.RawBytes.ToArray();
-        }
-        catch { return; }
+        method.EnsureRawBytes();
+        byte[] bytes = method.RawBytes.ToArray();
         if (bytes.Length == 0 || bytes.Length > 0x4000)
             return;
 
@@ -414,7 +403,8 @@ internal sealed class Il2CppTypeModel
             return ReturnKindScalarFloat;
         if (_scalarIntPrimitives.Contains(fullName))
             return ReturnKindScalarInt;
-        try { if (t.BaseType?.FullName == "System.Enum") return ReturnKindScalarInt; } catch { }
+        if (t.BaseType?.FullName == "System.Enum")
+            return ReturnKindScalarInt;
         return ReturnKindStruct;
     }
 
@@ -428,65 +418,49 @@ internal sealed class Il2CppTypeModel
     {
         if (_vtableNames.ContainsKey(type))
             return;
-        string[] names;
-        TypeAnalysisContext[] returns;
-        byte[] kinds;
-        sbyte[] paramCounts;
-        TypeAnalysisContext[][] paramTypes;
-        try
+        // A type with no definition of its own (a generic instance) states no vtable in the metadata.
+        MetadataUsage[] vtable = type.Definition?.VTable ?? System.Array.Empty<MetadataUsage>();
+        string[] names = new string[vtable.Length];
+        TypeAnalysisContext[] returns = new TypeAnalysisContext[vtable.Length];
+        byte[] kinds = new byte[vtable.Length];
+        sbyte[] paramCounts = new sbyte[vtable.Length];
+        TypeAnalysisContext[][] paramTypes = new TypeAnalysisContext[vtable.Length][];
+        System.Array.Fill(paramCounts, (sbyte)-1);
+        for (int i = 0; i < vtable.Length; i++)
         {
-            MetadataUsage[] vtable = type.Definition.VTable;
-            names = new string[vtable.Length];
-            returns = new TypeAnalysisContext[vtable.Length];
-            kinds = new byte[vtable.Length];
-            paramCounts = new sbyte[vtable.Length];
-            paramTypes = new TypeAnalysisContext[vtable.Length][];
-            System.Array.Fill(paramCounts, (sbyte)-1);
-            for (int i = 0; i < vtable.Length; i++)
+            MetadataUsage usage = vtable[i];
+            if (usage == null)
+                continue;
+            if (usage.Type == MetadataUsageType.MethodDef)
             {
-                MetadataUsage usage = vtable[i];
-                if (usage == null)
-                    continue;
-                try
+                Il2CppMethodDefinition method = usage.AsMethod();
+                if (method != null && method.slot == i)
                 {
-                    if (usage.Type == MetadataUsageType.MethodDef)
+                    names[i] = method.GlobalKey;
+                    paramCounts[i] = method.parameterCount <= sbyte.MaxValue ? (sbyte)method.parameterCount : (sbyte)-1;
+                    Il2CppType[] rawParams = method.InternalParameterTypes;
+                    if (rawParams != null && rawParams.Length > 0)
                     {
-                        Il2CppMethodDefinition method = usage.AsMethod();
-                        if (method != null && method.slot == i)
-                        {
-                            names[i] = method.GlobalKey;
-                            paramCounts[i] = method.parameterCount <= sbyte.MaxValue ? (sbyte)method.parameterCount : (sbyte)-1;
-                            try
-                            {
-                                Il2CppType[] rawParams = method.InternalParameterTypes;
-                                if (rawParams != null && rawParams.Length > 0)
-                                {
-                                    int take = rawParams.Length < 4 ? rawParams.Length : 4;
-                                    TypeAnalysisContext[] resolvedParams = new TypeAnalysisContext[take];
-                                    for (int p = 0; p < take; p++)
-                                        resolvedParams[p] = rawParams[p] != null ? _app.ResolveIl2CppType(rawParams[p]) : null;
-                                    paramTypes[i] = resolvedParams;
-                                }
-                            }
-                            catch { }
-                            if (method.RawReturnType != null)
-                            {
-                                TypeAnalysisContext resolved = _app.ResolveIl2CppType(method.RawReturnType);
-                                kinds[i] = ClassifyReturn(resolved);
-                                if (resolved != null && !resolved.IsValueType)
-                                    returns[i] = resolved;
-                            }
-                        }
+                        int take = rawParams.Length < 4 ? rawParams.Length : 4;
+                        TypeAnalysisContext[] resolvedParams = new TypeAnalysisContext[take];
+                        for (int p = 0; p < take; p++)
+                            resolvedParams[p] = rawParams[p] != null ? _app.ResolveIl2CppType(rawParams[p]) : null;
+                        paramTypes[i] = resolvedParams;
                     }
-                    else if (usage.Type == MetadataUsageType.MethodRef)
+                    if (method.RawReturnType != null)
                     {
-                        names[i] = usage.AsGenericMethodRef()?.ToString();
+                        TypeAnalysisContext resolved = _app.ResolveIl2CppType(method.RawReturnType);
+                        kinds[i] = ClassifyReturn(resolved);
+                        if (resolved != null && !resolved.IsValueType)
+                            returns[i] = resolved;
                     }
                 }
-                catch { }
+            }
+            else if (usage.Type == MetadataUsageType.MethodRef)
+            {
+                names[i] = usage.AsGenericMethodRef()?.ToString();
             }
         }
-        catch { names = System.Array.Empty<string>(); returns = System.Array.Empty<TypeAnalysisContext>(); kinds = System.Array.Empty<byte>(); paramCounts = System.Array.Empty<sbyte>(); paramTypes = System.Array.Empty<TypeAnalysisContext[]>(); }
         _vtableNames[type] = names;
         _vtableReturns[type] = returns;
         _vtableReturnKinds[type] = kinds;
@@ -536,9 +510,7 @@ internal sealed class Il2CppTypeModel
                 {
                     if (method.UnderlyingPointer == 0 || method.IsStatic || type.Definition == null)
                         continue;
-                    int vtableCount;
-                    try { vtableCount = type.Definition.VTable?.Length ?? 0; }
-                    catch { continue; }
+                    int vtableCount = type.Definition.VTable?.Length ?? 0;
                     if (vtableCount == 0)
                         continue;
                     if (scanned >= 5000 || candidates >= 1200)
@@ -566,9 +538,8 @@ internal sealed class Il2CppTypeModel
 
     private void ScanMethodForVtable(MethodAnalysisContext method, int thisReg, int vtableCount, Dictionary<int, int> votes, ref int candidates)
     {
-        byte[] bytes;
-        try { method.EnsureRawBytes(); bytes = method.RawBytes.ToArray(); }
-        catch { return; }
+        method.EnsureRawBytes();
+        byte[] bytes = method.RawBytes.ToArray();
         if (bytes.Length == 0 || bytes.Length > 0x4000)
             return;
 
