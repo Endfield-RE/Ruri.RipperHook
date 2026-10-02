@@ -12,7 +12,7 @@ namespace Ruri.RipperHook.BlenderBridge.Data;
 /// A whole cabmap as the ordinary column table every other list is: one row per entry, with
 /// the words a browser actually draws -- the name it is addressed by, every container path it
 /// answers to joined for display, the classes it carries, the file it came out of and how many
-/// other entries it pulls in.
+/// other entries it pulls in -- and whether anything it pulls in is a material.
 ///
 /// This is where those words are DECIDED. A host that derived them itself would be a second
 /// statement of the same thing, and the two drift the first time one of them is edited.
@@ -49,13 +49,39 @@ public static class CabRows
         int count = map.Count;
         int pieces = Math.Clamp(count / RowsPerPiece, 1, Environment.ProcessorCount * 4);
         ColumnTable[] built = new ColumnTable[pieces];
+        bool[] shaded = Shaded(map);
         Parallel.For(0, pieces, piece => built[piece] = Piece(map,
-            (int)((long)count * piece / pieces), (int)((long)count * (piece + 1) / pieces)));
+            (int)((long)count * piece / pieces), (int)((long)count * (piece + 1) / pieces), shaded));
         return ColumnTable.Concatenate(Id, built);
     }
 
+    /// <summary>Which rows reach a material through what they depend on, themselves included: a
+    /// material names the program it was compiled to, so these are the rows a shader decompile
+    /// has something to answer with -- a prefab or a mesh for every material it pulls in. One walk
+    /// back from every material over who depends on it, rather than a closure per row.</summary>
+    private static bool[] Shaded(CabTable map)
+    {
+        List<int> materials = [];
+        for (int id = 0; id < map.Count; id++)
+        {
+            if (map.ClassIds(id).Contains((int)ClassIDType.Material))
+            {
+                materials.Add(id);
+            }
+        }
+        bool[] shaded = new bool[map.Count];
+        foreach (int id in map.ReverseClosureIds(materials))
+        {
+            if (id < map.Count)
+            {
+                shaded[id] = true;
+            }
+        }
+        return shaded;
+    }
+
     /// <summary>One piece of rows, each word written straight into its column's bytes.</summary>
-    private static ColumnTable Piece(CabTable map, int start, int end)
+    private static ColumnTable Piece(CabTable map, int start, int end, bool[] shaded)
     {
         int rows = end - start;
         ColumnBuilder names = new(ColumnKind.Text, rows);
@@ -64,6 +90,7 @@ public static class CabRows
         ColumnBuilder types = new(ColumnKind.Text, rows);
         ColumnBuilder sources = new(ColumnKind.Text, rows);
         ColumnBuilder dependencies = new(ColumnKind.Real, rows);
+        ColumnBuilder shadings = new(ColumnKind.Integer, rows);
         Dictionary<int, byte[]> classNames = [];
         ArrayBufferWriter<byte> scratch = new(256);
         for (int id = start; id < end; id++)
@@ -81,6 +108,7 @@ public static class CabRows
             int file = map.FileIndex[id];
             sources.Add(file < 0 ? ReadOnlySpan<byte>.Empty : map.DistinctFileUtf8(file));
             dependencies.Add((double)map.DependencyCount(id));
+            shadings.Add(shaded[id] ? 1L : 0L);
         }
         return new ColumnTable
         {
@@ -94,6 +122,7 @@ public static class CabRows
                 types.Build("type_names", ColumnRole.Detail, "Type"),
                 sources.Build("source", ColumnRole.None, "Source"),
                 dependencies.Build("deps", ColumnRole.None, "Deps"),
+                shadings.Build("shaded", ColumnRole.None, "Shaded"),
             ],
         };
     }

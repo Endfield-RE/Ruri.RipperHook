@@ -57,7 +57,8 @@ public static class UnrealShaders
 
     private static ColumnTable Shaders(DataRequest request)
     {
-        string[] packages = Ruri.RipperHook.BlenderBridge.Statements.StatementSources.Archives(request.List(SeedParam), request.Map);
+        string[] packages = Reached(request.Map,
+            Ruri.RipperHook.BlenderBridge.Statements.StatementSources.Archives(request.List(SeedParam), request.Map));
         string[] archives = request.List(ArchivesParam);
         if (packages.Length == 0 && archives.Length == 0)
         {
@@ -66,6 +67,34 @@ public static class UnrealShaders
                 + $"name them with '{SeedParam}' or '{ArchivesParam}'.");
         }
         return Decompile(ShadersId, request, packages, archives: archives);
+    }
+
+    /// <summary>
+    /// The seeds, then every material package they reach through what they depend on. A seed
+    /// answers as whatever it is -- a mesh for the materials it names, a script for itself -- but a
+    /// blueprint or a level is drawn with materials only its pieces name, so what it pulls in is
+    /// asked too: the same reach the browser enables its button by.
+    /// </summary>
+    private static string[] Reached(CabTable map, string[] seeds)
+    {
+        List<string> packages = [.. seeds];
+        HashSet<string> named = new(seeds, StringComparer.OrdinalIgnoreCase);
+        List<int> ids = [];
+        foreach (string seed in seeds)
+        {
+            if (map.TryGetId(seed, out int id))
+            {
+                ids.Add(id);
+            }
+        }
+        foreach (int id in map.ClosureIds(ids))
+        {
+            if (id < map.Count && map.ClassIds(id).Contains((int)ClassIDType.Material) && named.Add(map.CabName(id)))
+            {
+                packages.Add(map.CabName(id));
+            }
+        }
+        return [.. packages];
     }
 
     /// <summary>
