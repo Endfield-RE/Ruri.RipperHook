@@ -227,7 +227,7 @@ stock 类无处安放的私有节点在 `Captures` 声明后捕获成 `TypeTreeV
 
 AR 经 `AssetRipper.Cpp2IL.Core` 把 `GameAssembly.dll` 变成**哑 assembly**（桩方法体），ILSpy 再反编译成 `ExportedProject/Assets/Scripts/**.cs`。本 hook 搭同一趟分析的车，把每个方法的**原生 x86/ARM 方法体**作 `//` 注释注入到匹配的 C# 方法体里。源：`AssetRipperHook/Il2CppMethodDump/`。
 
-**模型来源**：`IL2CppManager.Initialize`（冻结）在加载期跑 `Cpp2IlApi.InitializeLibCpp2Il`，之后静态 `Cpp2IlApi.CurrentAppContext` 持有完整模型并**贯穿 export 存活**。GUI 每次加载经 `ClearStaticState` + 新 `InitializeLibCpp2Il` 重置。**禁在 DllPostExporter/哑 DLL 保存阶段 dump**（那写的是 `AuxiliaryFiles/GameAssemblies/` 的原始 DLL，不是用户读的 C#）。
+**模型来源**：`IL2CppManager.Initialize`（冻结）在加载期跑 `Cpp2IlApi.InitializeLibCpp2Il`，之后静态 `Cpp2IlApi.CurrentAppContext` 持有完整模型并**贯穿 export 存活**。GUI 每次加载经 `ClearStaticState` + 新 `InitializeLibCpp2Il` 重置。**禁在 DllPostExporter/哑 DLL 保存阶段 dump**（那写的是 `AuxiliaryFiles/GameAssemblies/` 的原始 DLL，不是用户读的 C#）。**LibCpp2IL 只经 `app.LibCpp2IlContext` / `app.Binary` 读**：`InitializeLibCpp2Il` 走上下文 API、从不设 `LibCpp2IlMain.DefaultContext`，旧静态入口（`LibCpp2IlMain.Binary`/`GetLiteralByAddress`…，上游已 `[Obsolete]`）一调就抛 `LibCpp2IL is not Initialized` —— 2026-10-03 前它被一串空 catch 吞成「整功能静默失效」（一款原版 IL2CPP 测试游戏的 Assembly-CSharp 12513/12513 方法全挂）。
 
 **Hook 点**：`WholeProjectDecompiler.CreateDecompiler(DecompilerTypeSystem)`（`AssetRipper.ICSharpCode.Decompiler`，AR 分叉，版本不在 nuget.org）。AR 的 `CustomWholeProjectDecompiler` **没有** override 它，所以基方法会跑。用 `[RetargetMethodFunc]`：`ret` 前 `dup` 返回的 `CSharpDecompiler` 并 `call AddTransform`，把 `IAstTransform` 追加进 `decompiler.AstTransforms`（幂等）。**`AddTransform` 必须 `public static`** —— 注入的调用住在 ILSpy assembly 里。
 
@@ -249,7 +249,7 @@ AR 经 `AssetRipper.Cpp2IL.Core` 把 `GameAssembly.dll` 变成**哑 assembly**�
 **符号解析**（`Il2CppAsmAnnotator.ResolveAddress`，x86 指令感知与 ARM 文本回退共用）：裸地址无意义，每个**地址操作数**就地换符号、不保留裸地址。x86 由 Iced 告知操作数种类：只解**分支/调用目标**与**绝对数据全局**；**立即数一律不碰**（旧正则曾把 `add eax,5E593F7Ah` 误标 `sub_`）；**寄存器相对位移**留给数据流恢复成字段。按顺序：
 
 1. `appContext.MethodsByAddress[addr]` → 托管方法。
-2. **PE 导出表**（反射 `LoadPeExportTable`+`GetExportedFunctions`，测试游戏 242 条）。
+2. **PE 导出表**（`app.Binary.GetExportedFunctions()`，测试游戏 242 条）。
 3. **关键函数**（反射 `GetOrCreateKeyFunctionAddresses()` 的 `ulong` 成员）—— `il2cpp_codegen_*` wrapper **不在导出表里**，这是它们唯一来源。
 4. `GetLiteralByAddress` → 字符串字面量；`GetAnyGlobalByAddress` → `MetadataUsage`（TypeInfo/method/field global）。
 5. 未命中 metadata 的地址按 **PE 段表**（`ParsePeSections` 解析各段 VA 范围+可执行/可写/是否落盘）分类：
@@ -270,7 +270,7 @@ AR 经 `AssetRipper.Cpp2IL.Core` 把 `GameAssembly.dll` 变成**哑 assembly**�
 - **恢复天花板**（`_dumpprobe -- audit <seed> <N> [cs]` 随机抽样）：global-metadata 的所有符号种类已全恢复；候选 managed-field 命中率 ~52%，残留是 (a) il2cpp 运行期 C 结构访问、(b) 值类型/SIMD 批量拷贝/native 跳转表（本就非托管符号）、(c) 寄存器对象身份经任意计算丢失 —— **(c) 是静态数据流分析的固有极限**（需 SSA/值编号/过程间分析），非符号缺失。**栈槽跟踪试过 0 收益已回滚**（MSVC 用 callee-saved 寄存器存 this/局部，不 spill 到栈）。
 - **残余上游边界**（非本 hook）：折叠 RVA（两方法共享一 VA，ASM 忠实但 C# 声明配错 = Cpp2IL 方法→RVA 分配）、`[StructLayout((LayoutKind)N)]` 枚举渲染、特性构造参数（v24 是 generator 函数）。
 
-**迭代探针**（不跑完整 AR）：`Il2CppX86Listing`/`Il2CppAsmAnnotator`/`Il2CppTypeModel`/`Il2CppRegisterFlow`/`Il2CppSymbolResolver` **只依赖 Cpp2IL 模型** → 一个 `net10.0` 控制台直接 `<Compile Include>` 这五个真源 + `PackageReference AssetRipper.Cpp2IL.Core`/`Iced`(`Aliases="icedreal"`)，`InitializeLibCpp2Il` 后对挑出的 `MethodAnalysisContext` 调 `Il2CppX86Listing.Render(app, method)`，秒级看结果（改源即重编真源、非拷贝）。这是打磨符号恢复的主循环；ILSpy 探针只在验证 AST 注入接缝时才需要（`net9.0` 控制台复刻 `IL2CppManager` 静态 ctor → `DetermineUnityVersion` → `InitializeLibCpp2Il`，再 `new WholeProjectDecompiler` 子类 override `CreateDecompiler`，用文件夹 `IAssemblyResolver` 反编译一个哑 `Assembly-CSharp.dll`；经 HintPath 引 `ICSharpCode.Decompiler` 构建输出 DLL）。**PowerShell 5.1 反射不了这些包**（.NET Framework vs net9）。
+**迭代探针**（不跑完整 AR）：`Il2CppX86Listing`/`Il2CppAsmAnnotator`/`Il2CppTypeModel`/`Il2CppRegisterFlow`/`Il2CppSymbolResolver` **只依赖 Cpp2IL 模型** → 一个 `net10.0` 控制台直接 `<Compile Include>` 这五个真源 + `PackageReference AssetRipper.Cpp2IL.Core`/`Iced`(`Aliases="icedreal"`)，照 `IL2CppManager` 静态 ctor 先注册指令集 + `LibCpp2IlBinaryRegistry.RegisterBuiltInBinarySupport()`，再用**与生产相同的** `Cpp2IlApi.InitializeLibCpp2Il`（旧 `LibCpp2IlMain.LoadFromFile` 会顺手设静态默认上下文，正好掩盖上面那个生产失效）后对挑出的 `MethodAnalysisContext` 调 `Il2CppX86Listing.Render(app, method)`，秒级看结果（改源即重编真源、非拷贝）。这是打磨符号恢复的主循环；ILSpy 探针只在验证 AST 注入接缝时才需要（`net9.0` 控制台复刻 `IL2CppManager` 静态 ctor → `DetermineUnityVersion` → `InitializeLibCpp2Il`，再 `new WholeProjectDecompiler` 子类 override `CreateDecompiler`，用文件夹 `IAssemblyResolver` 反编译一个哑 `Assembly-CSharp.dll`；经 HintPath 引 `ICSharpCode.Decompiler` 构建输出 DLL）。**PowerShell 5.1 反射不了这些包**（.NET Framework vs net9）。
 
 ---
 
