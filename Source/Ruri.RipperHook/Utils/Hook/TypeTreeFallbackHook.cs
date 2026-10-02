@@ -13,7 +13,8 @@ namespace Ruri.RipperHook.HookUtils.TypeTreeFallbackHook;
 /// AssetRipper reads a class it generated no type for through a type tree in its own vocabulary --
 /// Unity's node and type names, as its embedded package states them. This answers that lookup from
 /// the hook's database for the active build, out of the tree the database keeps in the same
-/// vocabulary, converted the way AssetRipper converts its own package's nodes.
+/// vocabulary, converted the way AssetRipper converts its own package's nodes -- unless the title
+/// states the class's release tree itself (<see cref="TitleReleaseTree"/>).
 /// </summary>
 public class TypeTreeFallbackHook : CommonHook, IHookModule
 {
@@ -32,14 +33,20 @@ public class TypeTreeFallbackHook : CommonHook, IHookModule
             return false;
         }
 
-        releaseTree = Convert(release.Root, release.Blob);
+        TypeTreeNodeStruct packaged = Convert(release.Root, release.Blob);
+        releaseTree = TitleReleaseTree(classID, version, packaged) ?? packaged;
         editorTree = TypeTreeDatabase.GetUnityRoot(classID, activeVersion, editor: true) is { } editor
             ? Convert(editor.Root, editor.Blob)
-            : releaseTree;
+            : packaged;
         return true;
     }
 
-    private static TypeTreeNodeStruct Convert(TpkUnityNode node, TpkTypeTreeBlob blob)
+    /// <summary>A class's release tree as the title's own build writes it, given the tree the package holds for it
+    /// and the build's engine version: null when the title states none and the package's tree is read. A title's
+    /// hook retargets this for the classes its build writes differently from its dump.</summary>
+    public static TypeTreeNodeStruct? TitleReleaseTree(ClassIDType classID, UnityVersion version, TypeTreeNodeStruct packaged) => null;
+
+    internal static TypeTreeNodeStruct Convert(TpkUnityNode node, TpkTypeTreeBlob blob)
     {
         TypeTreeNodeStruct[] subNodes = new TypeTreeNodeStruct[node.SubNodes.Length];
         for (int i = 0; i < subNodes.Length; i++)
