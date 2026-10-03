@@ -100,8 +100,9 @@ public sealed record RendererFill(IMesh Mesh, IReadOnlyList<IMaterial?> Material
 
 /// <summary>One light a plan states: what it is, where it stands and how its transform turns it, and how
 /// bright, in the engine's own frame -- the colour linear as the engine emits it, the intensity the
-/// component's own, the range and cone angles (full angles, degrees) as it states them, and the multiplier
-/// on what it scatters into a participating medium (zero keeps it out), and the texels its shadow map spans
+/// component's own, the range and cone angles (full angles, degrees) as it states them, the multiplier
+/// on what it scatters into a participating medium (zero keeps it out), the multiplier on its specular
+/// reflections (one leaves them as they are), and the texels its shadow map spans
 /// (<see cref="UnityLightInfo.ShadowResolution"/>). The rotation is the transform's own,
 /// roll included: a cookie is projected along the light's axes, not only its forward. <see cref="Fade"/>
 /// and <see cref="Parameters"/> are what the engine's light list carries beyond that
@@ -109,7 +110,7 @@ public sealed record RendererFill(IMesh Mesh, IReadOnlyList<IMaterial?> Material
 public sealed record PlanLight(string Name, int Type, System.Numerics.Vector3 Position,
     System.Numerics.Quaternion Rotation, float Red, float Green, float Blue, float Intensity, float Range,
     float SpotAngle, float InnerSpotAngle, bool Shadows, int ShadowResolution, float VolumeFactor,
-    System.Numerics.Vector4 Fade,
+    float SpecularFactor, System.Numerics.Vector4 Fade,
     float[] Parameters);
 
 /// <summary>One thing a plan states short of its source: what, how many, and which.</summary>

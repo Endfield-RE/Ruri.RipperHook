@@ -63,6 +63,7 @@ public static class UnrealDatasets
     public const string PathParam = "path";
     private const string SkeletalMeshClassName = "SkeletalMesh";
     private const string VolumetricScatteringIntensity = "VolumetricScatteringIntensity";
+    private const string SpecularScale = "SpecularScale";
     public const string DataTableId = "unreal.datatable";
     public const string MeshGeometryId = "unreal.mesh.geometry";
     public const string MeshSkeletonId = "unreal.mesh.skeleton";
@@ -396,7 +397,7 @@ public static class UnrealDatasets
             "px#", "py#", "pz#", "qx#", "qy#", "qz#", "qw#", "sx#", "sy#", "sz#",
             "mesh", "skinned", "materials",
             "light", "lr#", "lg#", "lb#", "intensity#", "range#", "outer#", "inner#", "width#", "height#",
-            "shadows#", "volume#", "actor#");
+            "shadows#", "volume#", "specular#", "actor#");
         UnrealFileProvider provider = UnrealProviderSession.Open(request.GameRoot);
         string package = PackageKey(provider, request.Text(PackageParam));
         if (!provider.Files.TryGetValue(package, out GameFile? file))
@@ -541,7 +542,8 @@ public static class UnrealDatasets
                 Row(table, basis, name, parent, active, transform, string.Empty, false, string.Empty,
                     kind, decoded, light.Intensity, range, outer, inner, width, height, actor,
                     light.GetOrDefault(nameof(ULightComponentBase.CastShadows), true),
-                    light.GetOrDefault(VolumetricScatteringIntensity, 1f));
+                    light.GetOrDefault(VolumetricScatteringIntensity, 1f),
+                    light.GetOrDefault(SpecularScale, 1f));
                 break;
             }
             default:
@@ -593,12 +595,13 @@ public static class UnrealDatasets
 
     /// <summary>One placement row. A light's colour goes out sRGB-decoded; <paramref name="shadows"/>
     /// is whether it casts, the engine's own default being that it does -- a light that states
-    /// nothing about it casts. <paramref name="volume"/> is its volumetric scattering intensity, the
-    /// engine's own default being one.</summary>
+    /// nothing about it casts. <paramref name="volume"/> is its volumetric scattering intensity and
+    /// <paramref name="specular"/> its multiplier on specular highlights, the engine's own default for
+    /// both being one.</summary>
     private static void Row(TableBuilder table, SourceBasis basis, string name, int parent, bool active,
         FTransform transform, string mesh, bool skinned, string materials,
         string light, FLinearColor color, float intensity, float range, float outer, float inner,
-        float width, float height, int actor = 0, bool shadows = false, float volume = 0f)
+        float width, float height, int actor = 0, bool shadows = false, float volume = 0f, float specular = 0f)
     {
         (Vector3 position, Quaternion rotation, Vector3 scale) = UnrealComponents.Transform(basis, transform);
         table.Row(name, parent, active ? "1" : "0",
@@ -607,7 +610,7 @@ public static class UnrealDatasets
             scale.X, scale.Y, scale.Z,
             mesh, skinned ? "1" : "0", materials,
             light, color.R, color.G, color.B, intensity, range, outer, inner, width, height,
-            shadows ? 1 : 0, volume, actor);
+            shadows ? 1 : 0, volume, specular, actor);
     }
 
     /// <summary>

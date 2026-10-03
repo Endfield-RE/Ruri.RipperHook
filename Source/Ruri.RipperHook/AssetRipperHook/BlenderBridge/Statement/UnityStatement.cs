@@ -424,6 +424,7 @@ public sealed class UnityStatement
                     Shadows = light.Shadows,
                     ShadowResolution = light.ShadowResolution,
                     VolumeFactor = light.VolumeFactor,
+                    SpecularFactor = light.SpecularFactor,
                     Disabled = false,
                     Fade = light.Fade,
                     Parameters = light.Parameters,
