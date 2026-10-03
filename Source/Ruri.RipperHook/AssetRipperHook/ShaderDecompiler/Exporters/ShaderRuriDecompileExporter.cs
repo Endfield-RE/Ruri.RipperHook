@@ -44,7 +44,14 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
         GPUPlatform PickPlatform(IShader shader, IReadOnlyCollection<GPUPlatform> available, GPUPlatform defaultChoice) => defaultChoice;
 
-        IReadOnlyList<(string Stage, byte[] Binary)>? SplitProgramPayload(byte[] programData, GPUPlatform platform, string stage, UnityVersion version) => null;
+        /// <summary>
+        /// The stage modules one program's payload holds, when the engine packs several into one program; the program type
+        /// tells such a payload from a stock one.
+        /// </summary>
+        IReadOnlyList<(string Stage, byte[] Binary)>? SplitProgramPayload(byte[] programData, int programType, GPUPlatform platform, string stage, UnityVersion version) => null;
+
+        /// <summary>The platform a program type the stock enumeration does not know runs on, for an engine that adds such types.</summary>
+        GPUPlatform PlatformOfProgramType(int programType) => GPUPlatform.Unknown;
 
         IReadOnlyList<IModuleSymbolBinder> SymbolBinders => Array.Empty<IModuleSymbolBinder>();
 
@@ -232,7 +239,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
             List<(string Stage, byte[] Binary)> binaries = [];
             IReadOnlyList<(string Stage, byte[] Binary)>? split =
-                Observer?.SplitProgramPayload(subProgram.ProgramData, platform, stage, shader.Collection.Version);
+                Observer?.SplitProgramPayload(subProgram.ProgramData, subProgram.ProgramType, platform, stage, shader.Collection.Version);
             if (split is not null)
             {
                 binaries.AddRange(split);
@@ -592,7 +599,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             SerializedProgramData symbols = new()
             {
                 EntryPoint = "main",
-                DebugName = $"{read.ShaderName}/SubShader{read.SubShaderIndex}/Pass{read.PassIndex}/{read.Stage}/{read.SubProgram.GetProgramType(read.Version)}/{read.BlobIndex}",
+                DebugName = $"{read.ShaderName}/SubShader{read.SubShaderIndex}/Pass{read.PassIndex}/{read.Stage}/{ProgramTypeName(read.Version, read.SubProgram.ProgramType)}/{read.BlobIndex}",
             };
 
             AppendSymbols(symbols, read.CommonSymbols);
@@ -601,7 +608,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
             observer?.OnPassSymbolsRead(symbols, read.SubProgram, new ShaderReadContext(
                 read.ShaderName, read.SubShaderIndex, read.PassIndex, read.BlobIndex, read.Version, read.Stage,
-                ProgramTypeToPlatform(read.SubProgram.GetProgramType(read.Version)),
+                PlatformOf(read.Version, read.SubProgram.ProgramType),
                 read.CommonSymbols, read.ParameterSymbols));
 
             result.Add(new ShaderSymbolPass(read, symbols));
@@ -612,7 +619,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             p.Read.SubShaderIndex,
             p.Read.PassIndex,
             p.Read.Stage,
-            ProgramTypeToPlatform(p.Read.SubProgram.GetProgramType(p.Read.Version)) == GPUPlatform.D3D11,
+            PlatformOf(p.Read.Version, p.Read.SubProgram.ProgramType) == GPUPlatform.D3D11,
             p.Read.BlobIndex,
             p.Read.Binary,
             p.Read.KeywordIndices)).ToList());
@@ -1127,9 +1134,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
                 {
                     SerializedPlayerSubProgram playerSubProgram = group[i];
                     uint? parameterBlobIndex = paramGroup is not null && i < paramGroup.Count ? paramGroup[i] : null;
-                    ShaderGpuProgramType unityType = ToUnityProgramType(version, playerSubProgram.GpuProgramType);
-                    GPUPlatform resolvedPlatform = ProgramTypeToPlatform(unityType);
-                    Console.WriteLine($"[ShaderEnum]   Player group={groupIndex} index={i} blob={playerSubProgram.BlobIndex} paramBlob={(parameterBlobIndex.HasValue ? parameterBlobIndex.Value.ToString() : "<none>")} rawType={playerSubProgram.GpuProgramType} unityType={unityType} platform={resolvedPlatform} keywords=[{string.Join(",", playerSubProgram.KeywordIndices ?? [])}]");
+                    Console.WriteLine($"[ShaderEnum]   Player group={groupIndex} index={i} blob={playerSubProgram.BlobIndex} paramBlob={(parameterBlobIndex.HasValue ? parameterBlobIndex.Value.ToString() : "<none>")} rawType={playerSubProgram.GpuProgramType} unityType={ProgramTypeName(version, playerSubProgram.GpuProgramType)} platform={PlatformOf(version, playerSubProgram.GpuProgramType)} keywords=[{string.Join(",", playerSubProgram.KeywordIndices ?? [])}]");
                 }
             }
         }
@@ -1137,44 +1142,62 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         for (int i = 0; i < program.SubPrograms.Count; i++)
         {
             ISerializedSubProgram subProgram = program.SubPrograms[i];
-            ShaderGpuProgramType unityType = ToUnityProgramType(version, (sbyte)subProgram.GpuProgramType);
-            GPUPlatform resolvedPlatform = ProgramTypeToPlatform(unityType);
-            Console.WriteLine($"[ShaderEnum]   Flat index={i} blob={subProgram.BlobIndex} rawType={(sbyte)subProgram.GpuProgramType} unityType={unityType} platform={resolvedPlatform} keywords=[{string.Join(",", subProgram.KeywordIndices ?? [])}]");
+            Console.WriteLine($"[ShaderEnum]   Flat index={i} blob={subProgram.BlobIndex} rawType={(sbyte)subProgram.GpuProgramType} unityType={ProgramTypeName(version, (sbyte)subProgram.GpuProgramType)} platform={PlatformOf(version, (sbyte)subProgram.GpuProgramType)} keywords=[{string.Join(",", subProgram.KeywordIndices ?? [])}]");
         }
     }
 
     private static bool MatchesPlatform(UnityVersion version, sbyte rawType, GPUPlatform platform)
+        => PlatformOf(version, rawType) == platform;
+
+    /// <summary>
+    /// The platform a program of this raw type runs on: the stock enumeration's, else the one the engine states for a type
+    /// it added. A type neither knows has no platform to export for.
+    /// </summary>
+    private static GPUPlatform PlatformOf(UnityVersion version, int rawType)
     {
-        ShaderGpuProgramType ut = ToUnityProgramType(version, rawType);
-        return ProgramTypeToPlatform(ut) == platform;
+        if (TryToUnityProgramType(version, rawType, out ShaderGpuProgramType type))
+        {
+            return ProgramTypeToPlatform(type);
+        }
+
+        GPUPlatform engine = Observer?.PlatformOfProgramType(rawType) ?? GPUPlatform.Unknown;
+        return engine != GPUPlatform.Unknown
+            ? engine
+            : throw new NotSupportedException($"Unsupported gpu program type {rawType} for Unity {version}");
     }
 
-    private static ShaderGpuProgramType ToUnityProgramType(UnityVersion version, sbyte rawType)
+    private static string ProgramTypeName(UnityVersion version, int rawType)
+        => TryToUnityProgramType(version, rawType, out ShaderGpuProgramType type) ? type.ToString() : $"{PlatformOf(version, rawType)}Type{rawType}";
+
+    private static bool TryToUnityProgramType(UnityVersion version, int value, out ShaderGpuProgramType type)
     {
-		int value = rawType;
-		if (value < 0)
-		{
-			throw new NotSupportedException($"Unsupported negative gpu program type {value}");
-		}
+        type = ShaderGpuProgramType.Unknown;
+        if (value < 0)
+        {
+            throw new NotSupportedException($"Unsupported negative gpu program type {value}");
+        }
 
-		if (ShaderGpuProgramTypeExtensions.GpuProgramType55Relevant(version))
-		{
-			if (Enum.IsDefined(typeof(ShaderGpuProgramType55), value))
-			{
-				return ((ShaderGpuProgramType55)value).ToGpuProgramType();
-			}
+        if (ShaderGpuProgramTypeExtensions.GpuProgramType55Relevant(version))
+        {
+            if (Enum.IsDefined(typeof(ShaderGpuProgramType55), value))
+            {
+                type = ((ShaderGpuProgramType55)value).ToGpuProgramType();
+                return true;
+            }
 
-			if (Enum.IsDefined(typeof(ShaderGpuProgramType), value))
-			{
-				return (ShaderGpuProgramType)value;
-			}
-		}
-		else if (Enum.IsDefined(typeof(ShaderGpuProgramType53), value))
-		{
-			return ((ShaderGpuProgramType53)value).ToGpuProgramType();
-		}
+            if (Enum.IsDefined(typeof(ShaderGpuProgramType), value))
+            {
+                type = (ShaderGpuProgramType)value;
+                return true;
+            }
+        }
+        else if (Enum.IsDefined(typeof(ShaderGpuProgramType53), value))
+        {
+            type = ((ShaderGpuProgramType53)value).ToGpuProgramType();
+            return true;
+        }
 
-		throw new NotSupportedException($"Unsupported gpu program type {value} for Unity {version}");
+        return false;
     }
 
     private static GPUPlatform ProgramTypeToPlatform(ShaderGpuProgramType type)

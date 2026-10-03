@@ -1,6 +1,5 @@
 using AssetRipper.Primitives;
 using AssetRipper.SourceGenerated.Extensions.Enums.Shader;
-using AssetRipper.SourceGenerated.Extensions.Enums.Shader.GpuProgramType;
 using Ruri.ShaderTools;
 using Ruri.ShaderTools.Unity.ShaderLab;
 using Ruri.ShaderTools.Pipeline.Frontend;
@@ -283,18 +282,6 @@ public sealed class ShaderSubProgram
 		if (HasStructParameters(unityVersion))
 		{
 			StructParameters = structs.ToArray();
-		}
-	}
-
-	public ShaderGpuProgramType GetProgramType(UnityVersion version)
-	{
-		if (ShaderGpuProgramTypeExtensions.GpuProgramType55Relevant(version))
-		{
-			return ((ShaderGpuProgramType55)ProgramType).ToGpuProgramType();
-		}
-		else
-		{
-			return ((ShaderGpuProgramType53)ProgramType).ToGpuProgramType();
 		}
 	}
 
