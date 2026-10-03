@@ -73,7 +73,7 @@ internal sealed class TypeTreeScalarFieldStep<T> : TypeTreeFieldStep
         }
         if (capture)
         {
-            context.Capture(Path, TypeTreeValue.Scalar(Node, value));
+            context.Capture(Path, owner, TypeTreeValue.Scalar(Node, value));
         }
         if (owner is not null)
         {
@@ -109,7 +109,7 @@ internal sealed class TypeTreeCaptureFieldStep : TypeTreeFieldStep
 
     protected override void ReadCore(object? owner, ref EndianSpanReader reader, TypeTreeReadContext context)
     {
-        context.Capture(Path, TypeTreeCaptureReader.Read(Node, ref reader));
+        context.Capture(Path, owner, TypeTreeCaptureReader.Read(Node, ref reader));
     }
 }
 
