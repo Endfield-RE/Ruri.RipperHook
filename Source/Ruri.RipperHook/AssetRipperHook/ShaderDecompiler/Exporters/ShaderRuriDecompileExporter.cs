@@ -22,6 +22,7 @@ using AssetRipper.SourceGenerated.Subclasses.SerializedSubProgram;
 using AssetRipper.SourceGenerated.NativeEnums.Global;
 using Ruri.RipperHook;
 using Ruri.ShaderTools;
+using Ruri.ShaderTools.Binding;
 using Ruri.ShaderTools.Unity.ShaderLab;
 using Ruri.ShaderTools.Pipeline.Frontend;
 using MeshChannel = AssetRipper.SourceGenerated.Extensions.Enums.Shader.ShaderChannel.ShaderChannel;
@@ -43,6 +44,8 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         GPUPlatform PickPlatform(IShader shader, IReadOnlyCollection<GPUPlatform> available, GPUPlatform defaultChoice) => defaultChoice;
 
         IReadOnlyList<(string Stage, byte[] Binary)>? SplitProgramPayload(byte[] programData, GPUPlatform platform, string stage, UnityVersion version) => null;
+
+        IReadOnlyList<IModuleSymbolBinder> SymbolBinders => Array.Empty<IModuleSymbolBinder>();
     }
 
     public static IShaderExportObserver? Observer;
@@ -595,6 +598,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         int total = symbols.Count;
         var passStems = new string[total];
         var requests = new (byte[] Binary, DecompileOptions Options)[total];
+        IReadOnlyList<IModuleSymbolBinder> binders = Observer?.SymbolBinders ?? Array.Empty<IModuleSymbolBinder>();
 
         for (int i = 0; i < total; i++)
         {
@@ -609,6 +613,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
                 UnityMetadata = unityMetadata,
                 ShaderModel = 51,
                 VertexInputs = VertexInputsOf(pass.Read),
+                SymbolBinders = binders,
             });
         }
 
