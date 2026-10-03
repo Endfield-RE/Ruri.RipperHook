@@ -198,7 +198,7 @@ ExportHandlerHook.Register(new AssetProcessorRegistration
 | `[TypeTreeValueFix(classID, nodePath)]` | 值改写 | Endfield `m_MeshCompression==4` 归一成 0 |
 | `[TypeTreePostRead(classID, Slot, Captures=[...])]` | 读后解码 | ACL 解压、`m_TOSData`→CRC32→`m_TOS`、shader blob 上提 |
 
-stock 类无处安放的私有节点在 `Captures` 声明后捕获成 `TypeTreeValue`（标量/字节数组/序列/结构），由 gate 与 post-read 经 `TypeTreeReadContext` 取用；没声明的只消费字节。路径 = 从类根起、消毒后节点名以 `/` 连（`m_MuscleClip/m_Clip/m_Data/m_DenseClip/m_ACLArray`）。
+stock 类无处安放的私有节点在 `Captures` 声明后捕获成 `TypeTreeValue`（标量/字节数组/序列/结构），由 gate 与 post-read 经 `TypeTreeReadContext` 取用；没声明的只消费字节。序列里的节点每个元素读一次：`Find` 给最后一次，`FindAll` 按读取顺序给全部，每条带读它时所在的 stock 实例（`TypeTreeCapture.Owner`），post-read 据此把值挂回对应对象（例：每个程序 `m_CommonParameters` 的 `m_DescriptorSetParams`）。路径 = 从类根起、消毒后节点名以 `/` 连（`m_MuscleClip/m_Clip/m_Data/m_DenseClip/m_ACLArray`）。
 
 **输入数据集**
 - `D:\Ruri\Git\FractalTools\TypeTreeDumps` —— 官方 dump，1384 个版本，`InfoJson/<ver>.json`。规范真源。
