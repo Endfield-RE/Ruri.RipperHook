@@ -26,6 +26,7 @@ public static class Il2CppInstallContext
         ArgumentException.ThrowIfNullOrWhiteSpace(gameRoot);
         RuntimeHelpers.RunClassConstructor(typeof(IL2CppManager).TypeHandle);
         if (!PlatformChecker.CheckPlatform([gameRoot], LocalFileSystem.Instance, out PlatformGameStructure? platform, out _)
+            || platform is null
             || platform.Il2CppGameAssemblyPath is not { } image
             || platform.Il2CppMetaDataPath is not { } metadata)
         {
