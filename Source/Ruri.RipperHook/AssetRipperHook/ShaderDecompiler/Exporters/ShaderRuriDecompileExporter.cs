@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading;
 using AssetRipper.Assets;
 using AssetRipper.Assets.Generics;
+using AssetRipper.Export.Modules.Shaders;
 using AssetRipper.Export.Modules.Shaders.Extensions;
 using AssetRipper.Export.Modules.Shaders.ShaderBlob;
 using AssetRipper.Export.UnityProjects;
@@ -46,6 +47,15 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         IReadOnlyList<(string Stage, byte[] Binary)>? SplitProgramPayload(byte[] programData, GPUPlatform platform, string stage, UnityVersion version) => null;
 
         IReadOnlyList<IModuleSymbolBinder> SymbolBinders => Array.Empty<IModuleSymbolBinder>();
+
+        /// <summary>
+        /// The descriptor sets an engine serializes beside the fields the stock classes hold for these parameters, with
+        /// names as indices into the pass's name table.
+        /// </summary>
+        IReadOnlyList<DescriptorSetParameter> DescriptorSetsOf(ISerializedProgramParameters parameters) => Array.Empty<DescriptorSetParameter>();
+
+        /// <summary>What the engine writes into a parameter entry after the stock sections, read into the program.</summary>
+        void ReadTrailingParameterSections(int blobVersion, AssetReader reader, ShaderSubProgram target) { }
     }
 
     public static IShaderExportObserver? Observer;
@@ -208,11 +218,12 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
         int slotStart = result.Count;
 
+        TrailingParameterSectionsReader? trailingSections = Observer is { } observer ? observer.ReadTrailingParameterSections : null;
         foreach (ShaderReadSource source in EnumerateProgramSources(program, shader.Collection.Version, platform))
         {
             ShaderSubProgram subProgram = source.ParameterBlobIndex is uint paramBlobIndex
-                ? blob.GetSubProgram(source.BlobIndex, paramBlobIndex)
-                : blob.GetSubProgram(source.BlobIndex);
+                ? blob.GetSubProgram(source.BlobIndex, paramBlobIndex, trailingSections)
+                : blob.GetSubProgram(source.BlobIndex, trailingSections);
 
             if (subProgram.ProgramData.Length == 0)
             {
@@ -521,7 +532,55 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             });
         }
 
+        IReadOnlyList<DescriptorSetParameter> descriptorSets = Observer?.DescriptorSetsOf(parameters) ?? Array.Empty<DescriptorSetParameter>();
+        AppendDescriptorSets(data, descriptorSets.Select(set => new DescriptorSetParameter
+        {
+            Name = set.NameIndex < 0 ? set.Name : resolveName(set.NameIndex),
+            NameIndex = set.NameIndex,
+            SetId = set.SetId,
+            MaxBindingIndex = set.MaxBindingIndex,
+            Bindings = set.Bindings.Select(binding => binding with
+            {
+                Name = binding.NameIndex < 0 ? binding.Name : resolveName(binding.NameIndex),
+            }).ToList(),
+        }));
+
         return data;
+    }
+
+    /// <summary>
+    /// Adds descriptor sets the way the engine binds them: the bindings of every statement of a set land in the one set
+    /// of that id, each in the slot its binding number names. Two statements of one slot that disagree leave no single
+    /// table to bind by.
+    /// </summary>
+    private static void AppendDescriptorSets(SerializedProgramData target, IEnumerable<DescriptorSetParameter> sets)
+    {
+        foreach (DescriptorSetParameter set in sets)
+        {
+            DescriptorSetParameter? held = target.DescriptorSetParameters.FirstOrDefault(existing => existing.SetId == set.SetId);
+            if (held is null)
+            {
+                held = new DescriptorSetParameter(set.Name, set.SetId) { NameIndex = set.NameIndex };
+                target.DescriptorSetParameters.Add(held);
+            }
+            held.MaxBindingIndex = Math.Max(held.MaxBindingIndex, set.MaxBindingIndex);
+
+            foreach (SetBinding binding in set.Bindings)
+            {
+                SetBinding? slot = held.Bindings.FirstOrDefault(existing => existing.BindingIndex == binding.BindingIndex);
+                if (slot is null)
+                {
+                    held.Bindings.Add(binding);
+                }
+                else if (slot.Name != binding.Name || slot.DescriptorType != binding.DescriptorType
+                    || slot.PackedBinding != binding.PackedBinding || slot.PackedInfo != binding.PackedInfo)
+                {
+                    throw new InvalidDataException(
+                        $"set {set.SetId} binding {binding.BindingIndex} is stated as '{slot.Name}' (type {slot.DescriptorType}) "
+                        + $"and as '{binding.Name}' (type {binding.DescriptorType})");
+                }
+            }
+        }
     }
 
     private static List<ShaderSymbolPass> BuildSymbols(List<ShaderReadPass> reads)
@@ -947,6 +1006,8 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         {
             target.BufferParameters.Add(buffer);
         }
+
+        AppendDescriptorSets(target, source.DescriptorSetParameters);
     }
 
     private static void AppendRuntimeSymbols(SerializedProgramData target, ShaderSubProgram subProgram)
@@ -990,6 +1051,8 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         {
             target.BufferParameters.Add(buffer);
         }
+
+        AppendDescriptorSets(target, subProgram.DescriptorSetParameters);
     }
 
     private static Dictionary<int, string> BuildNameTable(AccessDictionaryBase<Utf8String, int> nameIndices)

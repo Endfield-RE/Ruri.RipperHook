@@ -68,7 +68,7 @@ public sealed class ShaderSubProgramBlob
 	}
 
 
-	public ShaderSubProgram GetSubProgram(uint blobIndex)
+	public ShaderSubProgram GetSubProgram(uint blobIndex, TrailingParameterSectionsReader? trailingSections)
 	{
 		if (m_cachedSubPrograms.TryGetValue((blobIndex, blobIndex), out ShaderSubProgram? subProgram))
 		{
@@ -76,13 +76,13 @@ public sealed class ShaderSubProgramBlob
 		}
 
 		subProgram = new ShaderSubProgram();
-		ReadEntry(blobIndex, subProgram, readProgramData: true, readParams: true);
+		ReadEntry(blobIndex, subProgram, readProgramData: true, readParams: true, trailingSections);
 
 		m_cachedSubPrograms.TryAdd((blobIndex, blobIndex), subProgram);
 		return subProgram;
 	}
 
-	public ShaderSubProgram GetSubProgram(uint blobIndex, uint paramBlobIndex)
+	public ShaderSubProgram GetSubProgram(uint blobIndex, uint paramBlobIndex, TrailingParameterSectionsReader? trailingSections)
 	{
 		if (m_cachedSubPrograms.TryGetValue((blobIndex, paramBlobIndex), out ShaderSubProgram? subProgram))
 		{
@@ -90,21 +90,23 @@ public sealed class ShaderSubProgramBlob
 		}
 
 		subProgram = new ShaderSubProgram();
-		ReadEntry(blobIndex, subProgram, readProgramData: true, readParams: false);
-		ReadEntry(paramBlobIndex, subProgram, readProgramData: false, readParams: true);
+		ReadEntry(blobIndex, subProgram, readProgramData: true, readParams: false, trailingSections);
+		ReadEntry(paramBlobIndex, subProgram, readProgramData: false, readParams: true, trailingSections);
 
 		m_cachedSubPrograms.TryAdd((blobIndex, paramBlobIndex), subProgram);
 		return subProgram;
 	}
 
-	public int LastDanglingIndexCount { get; private set; }
-
-	private void ReadEntry(uint index, ShaderSubProgram subProgram, bool readProgramData, bool readParams)
+	/// <summary>
+	/// One entry, read the way the engine reads it. Parameters are the last thing an entry holds, so an entry read
+	/// through its parameters is read to its end; bytes left over are a section this reader does not know, and the
+	/// parameters read before them cannot be trusted to be all the entry states.
+	/// </summary>
+	private void ReadEntry(uint index, ShaderSubProgram subProgram, bool readProgramData, bool readParams, TrailingParameterSectionsReader? trailingSections)
 	{
 		if (index >= Entries.Length)
 		{
-			LastDanglingIndexCount++;
-			return;
+			throw new InvalidDataException($"a program names blob entry {index}, but the blob holds {Entries.Length}");
 		}
 
 		ShaderSubProgramEntry entry = Entries[index];
@@ -112,34 +114,25 @@ public sealed class ShaderSubProgramBlob
 		using MemoryStream entryMem = new MemoryStream(segmentBytes, entry.Offset, entry.Length, writable: false);
 		using AssetReader entryReader = new AssetReader(entryMem, m_shaderCollection);
 
-		if (!readProgramData && readParams)
-		{
-			try
-			{
-				subProgram.Read(entryReader, readProgramData, readParams);
-			}
-			catch
-			{
-			}
-			return;
-		}
-
 		try
 		{
-			subProgram.Read(entryReader, readProgramData, readParams);
+			subProgram.Read(entryReader, readProgramData, readParams, trailingSections);
 		}
-		catch (Exception ex)
+		catch (Exception exception) when (exception is EndOfStreamException or InvalidDataException or ArgumentOutOfRangeException)
 		{
-			UnreadableProgramDataCount++;
-			if (Environment.GetEnvironmentVariable("RURI_SHADER_BLOB_DEBUG") == "1")
-			{
-				Console.Error.WriteLine($"[BlobDebug] entry {index}/{Entries.Length} seg={entry.Segment} off={entry.Offset} len={entry.Length} not a code entry: {ex.Message}");
-				Console.Error.WriteLine("[BlobDebug]   head=" + BitConverter.ToString(segmentBytes, entry.Offset, Math.Min(48, entry.Length)));
-			}
+			throw new InvalidDataException(
+				$"blob entry {index} (version {subProgram.BlobVersion}, {entry.Length} bytes, read as "
+				+ $"{(readProgramData ? "code" : string.Empty)}{(readProgramData && readParams ? " and " : string.Empty)}{(readParams ? "parameters" : string.Empty)}) "
+				+ $"fails at byte {entryMem.Position}: {exception.Message}; head {Convert.ToHexString(segmentBytes, entry.Offset, Math.Min(64, entry.Length))}",
+				exception);
+		}
+		if (readParams && entryMem.Position != entry.Length)
+		{
+			throw new InvalidDataException(
+				$"blob entry {index} (version {subProgram.BlobVersion}) holds {entry.Length} bytes, but its parameters end at "
+				+ $"{entryMem.Position}: the rest is a section no reader here knows");
 		}
 	}
-
-	public int UnreadableProgramDataCount { get; private set; }
 
 	public ShaderSubProgramEntry[] Entries { get; set; } = [];
 
