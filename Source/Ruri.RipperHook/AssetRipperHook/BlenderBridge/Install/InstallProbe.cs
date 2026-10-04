@@ -106,6 +106,28 @@ public static class InstallProbe
     }
 
     /// <summary>
+    /// The install a path lies in: the nearest folder, from the path itself upward, that publishes a player
+    /// (<see cref="Read"/> answers at least one). A chunk or bundle read straight out of an install is still that
+    /// install's, and what the install states beside its content -- its identity, its code image -- is read from
+    /// there. A path no install holds answers null: it is loose content with no install behind it.
+    /// </summary>
+    public static string? RootOf(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        string full = Path.GetFullPath(path);
+        for (string? folder = Directory.Exists(full) ? full : Path.GetDirectoryName(full);
+             !string.IsNullOrEmpty(folder);
+             folder = Path.GetDirectoryName(folder))
+        {
+            if (Read(folder).Count > 0)
+            {
+                return folder;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
     /// The ONE player an install is. A project's extra builds are named after it: either its
     /// companyName ends with the product ("illusion\Koikatu" ships "Koikatu" plus "CharaStudio"),
     /// or the product is the one the others extend ("KoikatsuSunshine" owns "KoikatsuSunshine_VR").

@@ -46,15 +46,21 @@ public sealed class TypeTreeReadPlan
     {
         TypeTreeReadContext context = _context ??= new TypeTreeReadContext();
         context.Begin(asset, ClassID, Version);
-
-        root.ReadInto(asset, ref reader, context);
-
-        if (postReaders is not null)
+        try
         {
-            for (int i = 0; i < postReaders.Count; i++)
+            root.ReadInto(asset, ref reader, context);
+
+            if (postReaders is not null)
             {
-                postReaders[i](context);
+                for (int i = 0; i < postReaders.Count; i++)
+                {
+                    postReaders[i](context);
+                }
             }
+        }
+        finally
+        {
+            context.End();
         }
     }
 

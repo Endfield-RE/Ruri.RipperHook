@@ -9,9 +9,6 @@ namespace Ruri.FModelHook.ShaderDecompiler;
 
 internal static class ShaderLabEmitter
 {
-    /// <summary>What the decompiler prefixes every binding of the material's own buffer with.</summary>
-    private const string MaterialBufferPrefix = "Material_";
-
     private sealed class ContainerOutputEntry
     {
         public required ShaderPrep Prep { get; init; }
@@ -75,11 +72,6 @@ internal static class ShaderLabEmitter
             };
         }
 
-        if (result.FinalSymbols != null)
-        {
-            result.FinalSymbols.UsedMaterials = new List<string>(map.Assets);
-        }
-
         System.Threading.Interlocked.Increment(ref state.Decompiled);
         return new ContainerOutputEntry
         {
@@ -138,7 +130,7 @@ internal static class ShaderLabEmitter
             }
         }
 
-        OutputFile.Write(containerBasePath + ".shader", WriteContainerShaderFile(metadata, pooled, splittableStages));
+        state.Writer.Write(containerBasePath + ".shader", WriteContainerShaderFile(metadata, pooled, splittableStages));
     }
 
     /// <summary>
@@ -184,8 +176,7 @@ internal static class ShaderLabEmitter
 
         if (program.Success && !string.IsNullOrWhiteSpace(program.SourceCode))
         {
-            string source = RenameAnonymousGlobals(program.SourceCode!, program.ShaderTypeName, program.ShaderHash, program.SymbolMetadata, metadata.MaterialTextureOrder);
-            foreach (string line in SplitLines(source))
+            foreach (string line in SplitLines(program.SourceCode!))
             {
                 sb.AppendLine(line);
             }
@@ -213,8 +204,6 @@ internal static class ShaderLabEmitter
             MaterialName = map.PrimaryName,
             UsedMaterials = new List<string>(map.Assets),
             PropertiesBlock = map.PropertiesBlock,
-            MaterialTextureOrder = new List<string>(map.MaterialTextureOrder),
-            MaterialTextureBuckets = new List<int>(map.MaterialTextureBuckets),
             SubShaderTags = map.SubShaderTags,
             PassCommands = map.PassCommands,
             Programs = outputs
@@ -224,6 +213,12 @@ internal static class ShaderLabEmitter
                 {
                     ShaderContainerInfo? perMap = ResolvePerMapContainer(state, map, output.Prep.ShaderIndex);
                     ShaderContainerInfo? container = perMap ?? output.Prep.ContainerInfo;
+                    string? source = output.Result.SourceCode;
+                    if (output.Result.Success && !string.IsNullOrWhiteSpace(source))
+                    {
+                        source = RenameAnonymousGlobals(source, container?.ShaderTypeName ?? string.Empty, out int collisions);
+                        System.Threading.Interlocked.Add(ref state.NameCollisions, collisions);
+                    }
                     return new UeShaderLabProgramData
                     {
                         Stage = StageName(output.Result.Stage),
@@ -241,7 +236,7 @@ internal static class ShaderLabEmitter
                         SourceLanguage = output.Result.SourceLanguage,
                         SourceFileExtension = output.Result.SourceFileExtension,
                         Success = output.Result.Success,
-                        SourceCode = output.Result.SourceCode,
+                        SourceCode = source,
                         ErrorMessage = output.Result.ErrorMessage,
                         SymbolMetadata = output.Result.FinalSymbols,
                     };
@@ -319,10 +314,10 @@ internal static class ShaderLabEmitter
             }
             if (!string.IsNullOrWhiteSpace(passPrograms[0].ShaderMapHash)) sb.AppendLine($"            // ShaderMapHash: {passPrograms[0].ShaderMapHash}");
 
-            bool anyGlsl = passPrograms.Any(p => string.Equals(p.SourceLanguage, "glsl", StringComparison.OrdinalIgnoreCase));
-            sb.AppendLine(anyGlsl ? "            GLSLPROGRAM" : "            HLSLPROGRAM");
+            bool allGlsl = passPrograms.All(static p => IsGlsl(p));
+            sb.AppendLine(allGlsl ? "            GLSLPROGRAM" : "            HLSLPROGRAM");
 
-            if (!anyGlsl)
+            if (!allGlsl)
             {
                 sb.AppendLine("            #pragma target 5.0");
                 sb.AppendLine("            #pragma use_dxc");
@@ -360,7 +355,7 @@ internal static class ShaderLabEmitter
                 }
 
                 EmitStageVariants(sb, stagePrograms, pooled,
-                    splitInclude: splittableStages.Contains(stageGroup.Key), metadata.MaterialTextureOrder);
+                    splitInclude: splittableStages.Contains(stageGroup.Key), allGlsl);
 
                 if (stageMacro != null)
                 {
@@ -368,7 +363,7 @@ internal static class ShaderLabEmitter
                 }
                 sb.AppendLine();
             }
-            sb.AppendLine(anyGlsl ? "            ENDGLSL" : "            ENDHLSL");
+            sb.AppendLine(allGlsl ? "            ENDGLSL" : "            ENDHLSL");
             sb.AppendLine("        }");
         }
         sb.AppendLine("    }");
@@ -425,11 +420,11 @@ internal static class ShaderLabEmitter
     /// inline means.
     /// </summary>
     private static void EmitStageVariants(StringBuilder sb, List<UeShaderLabProgramData> stagePrograms,
-        IReadOnlyDictionary<UeShaderLabProgramData, string> pooled, bool splitInclude, IReadOnlyList<string> materialTextureOrder)
+        IReadOnlyDictionary<UeShaderLabProgramData, string> pooled, bool splitInclude, bool blockIsGlsl)
     {
         if (stagePrograms.Count == 1)
         {
-            EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, materialTextureOrder);
+            EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, blockIsGlsl);
             return;
         }
 
@@ -437,7 +432,7 @@ internal static class ShaderLabEmitter
         {
             sb.AppendLine($"            // Note: {stagePrograms.Count - 1} further variant(s) of this stage were not emitted."
                           + " Ask for split variants to get each as its own file.");
-            EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, materialTextureOrder);
+            EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, blockIsGlsl);
             return;
         }
 
@@ -445,15 +440,28 @@ internal static class ShaderLabEmitter
         for (int i = 0; i < stagePrograms.Count; i++)
         {
             sb.AppendLine($"            #{(i == 0 ? "if" : "elif")} defined({VariantSelectKeyword(stagePrograms[i])})");
-            EmitProgramBlock(sb, stagePrograms[i], pooled, splitInclude, materialTextureOrder);
+            EmitProgramBlock(sb, stagePrograms[i], pooled, splitInclude, blockIsGlsl);
         }
         sb.AppendLine("            #else");
-        EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, materialTextureOrder);
+        EmitProgramBlock(sb, stagePrograms[0], pooled, splitInclude, blockIsGlsl);
         sb.AppendLine("            #endif");
     }
 
-    private static void EmitProgramBlock(StringBuilder sb, UeShaderLabProgramData program, IReadOnlyDictionary<UeShaderLabProgramData, string> pooled, bool splitInclude, IReadOnlyList<string> materialTextureOrder)
+    /// <summary>
+    /// Whether a program's source is GLSL. The block a pass is written in is GLSL only when every
+    /// program of it is: a map can hold both -- tessellation stages have no HLSL spelling in the
+    /// backend while the vertex and pixel stages beside them do -- and ShaderLab has one block
+    /// per pass, so a program whose language is not the block's says so where it stands.
+    /// </summary>
+    private static bool IsGlsl(UeShaderLabProgramData program)
+        => string.Equals(program.SourceLanguage, "glsl", StringComparison.OrdinalIgnoreCase);
+
+    private static void EmitProgramBlock(StringBuilder sb, UeShaderLabProgramData program, IReadOnlyDictionary<UeShaderLabProgramData, string> pooled, bool splitInclude, bool blockIsGlsl)
     {
+        if (IsGlsl(program) != blockIsGlsl)
+        {
+            sb.AppendLine($"            // Language: {program.SourceLanguage.ToUpperInvariant()}");
+        }
         if (splitInclude)
         {
             sb.AppendLine($"            #include \"{pooled[program]}\"");
@@ -468,8 +476,7 @@ internal static class ShaderLabEmitter
 
         if (program.Success && !string.IsNullOrWhiteSpace(program.SourceCode))
         {
-            string renamed = RenameAnonymousGlobals(program.SourceCode!, program.ShaderTypeName, program.ShaderHash, program.SymbolMetadata, materialTextureOrder);
-            string adapted = AdaptHlslForUnity(renamed);
+            string adapted = AdaptHlslForUnity(program.SourceCode!);
             foreach (string line in SplitLines(adapted))
             {
                 sb.Append("            ");
@@ -631,237 +638,39 @@ internal static class ShaderLabEmitter
 
 
     /// <summary>
-    /// A material texture's name as the emitted source spells it. The order list is read back off
-    /// the symbols the decompiler HANDED BACK, which already carry the buffer they belong to, so
-    /// the prefix is put on only when it is not there yet -- doubling it made every already-named
-    /// slot disagree with itself and the ordering was abandoned every single time.
+    /// A program's source with every binding no symbol named spelled after the shader it belongs to. A binding a
+    /// uniform buffer carries is named upstream, from the shader's own resource table; one that reaches here still
+    /// anonymous has no name in any source, so it keeps the one thing that is true of it -- which shader, which
+    /// register -- rather than a name guessed from its type or from how it is used. The loose-parameter buffer is
+    /// spelled after its shader type the same way. Two bindings that would come out under one name are left as
+    /// the decompiler wrote them, and counted.
     /// </summary>
-    private static void ApplyMaterialTextureOrder(
-        string source,
-        List<(string Ident, string HlslType, string UbmtKind, string SlotPrefix, string SlotIdx)> anons,
-        Dictionary<int, string> rename,
-        HashSet<int> claimed,
-        IReadOnlyList<string> materialTextureOrder)
+    private static string RenameAnonymousGlobals(string source, string shaderTypeName, out int collisions)
     {
-        if (materialTextureOrder.Count == 0) return;
-
-        var declarations = new List<(string Name, int Slot, bool IsAnon, int AnonIndex)>();
-        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
-            source, @"(?m)^\s*Texture(?:2D|2DArray|Cube|CubeArray|3D|1D)\s*(?:<[^>]*>)?\s+(\w+)\s*:\s*register\(t(\d+)"))
-        {
-            string ident = m.Groups[1].Value;
-            int slot = int.Parse(m.Groups[2].Value);
-            int anonIndex = anons.FindIndex(a => a.Ident == ident);
-            declarations.Add((ident, slot, anonIndex >= 0, anonIndex));
-        }
-        if (declarations.Count == 0) return;
-        declarations.Sort((a, b) => a.Slot.CompareTo(b.Slot));
-
-        // A slot is the material's when it is still anonymous or already carries the
-        // material buffer's own prefix. Naming every OTHER uniform buffer instead was a
-        // list that could only ever be incomplete: one unlisted buffer put an extra slot
-        // in the count, the count stopped matching the material's own texture list, and
-        // the whole ordering was abandoned for that shader.
-        var materialSlots = declarations
-            .Where(d => d.IsAnon || d.Name.StartsWith(MaterialBufferPrefix, StringComparison.Ordinal))
-            .ToList();
-        if (materialSlots.Count == 0) return;
-
-        IReadOnlyList<string> order = materialTextureOrder;
-        if (order.Count < materialSlots.Count)
-        {
-            Console.Error.WriteLine($"[ShaderLab] material-texture order: 槽 {materialSlots.Count} 个 > 材质贴图表 {order.Count} 项 — 放弃按序命名(宁可无名)。");
-            return;
-        }
-
-        for (int i = 0; i < materialSlots.Count; i++)
-        {
-            var slot = materialSlots[i];
-            if (slot.IsAnon) continue;
-            string expected = MaterialSlotName(order[i]);
-            if (!string.Equals(slot.Name, expected, StringComparison.Ordinal))
-            {
-                Console.Error.WriteLine(
-                    $"[ShaderLab] material-texture order: 锚点不符(t{slot.Slot} 已具名 '{slot.Name}',按序应为 '{expected}')" +
-                    " — 声明序假设不成立,放弃按序命名。");
-                return;
-            }
-        }
-
-        for (int i = 0; i < materialSlots.Count; i++)
-        {
-            var slot = materialSlots[i];
-            if (!slot.IsAnon || claimed.Contains(slot.AnonIndex)) continue;
-            rename[slot.AnonIndex] = MaterialSlotName(order[i]);
-            claimed.Add(slot.AnonIndex);
-        }
-    }
-
-    private static string MaterialSlotName(string stated)
-    {
-        string identifier = SanitizeIdent(stated);
-        return identifier.StartsWith(MaterialBufferPrefix, StringComparison.Ordinal)
-            ? identifier
-            : MaterialBufferPrefix + identifier;
-    }
-
-    private static string RenameAnonymousGlobals(string source, string shaderTypeName, string shaderHash, SerializedProgramData? symbolMetadata, IReadOnlyList<string> materialTextureOrder)
-    {
-        if (string.IsNullOrWhiteSpace(source)) return source;
-        string discriminator = string.IsNullOrWhiteSpace(shaderTypeName)
-            ? string.Empty
-            : SanitizeIdent(shaderTypeName);
-
+        collisions = 0;
+        string discriminator = string.IsNullOrWhiteSpace(shaderTypeName) ? string.Empty : SanitizeIdent(shaderTypeName);
         string result = source;
-
-        if (!string.IsNullOrEmpty(discriminator) && result.Contains("_Globals_m0", StringComparison.Ordinal))
+        if (discriminator.Length > 0)
         {
             result = result.Replace("_Globals_m0", $"_loose_{discriminator}", StringComparison.Ordinal);
-        }
-
-        if (result.Contains(" : register(", StringComparison.Ordinal))
-        {
-            List<(string Ident, string HlslType, string UbmtKind, string SlotPrefix, string SlotIdx)> anons = new();
-            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
-                result,
-                @"^([A-Za-z][A-Za-z0-9_]*(?:<[^>]+>)?)\s+([TU]\d+|_\d+)\s*:\s*register\(([tusb])(\d+)",
-                System.Text.RegularExpressions.RegexOptions.Multiline))
-            {
-                string hlslType = m.Groups[1].Value.Trim();
-                string ident = m.Groups[2].Value;
-                string slotPrefix = m.Groups[3].Value;
-                string slotIdx = m.Groups[4].Value;
-                string ubmtKind = ClassifyUbmtFromHlslType(hlslType, slotPrefix);
-                anons.Add((ident, hlslType, ubmtKind, slotPrefix, slotIdx));
-            }
-
-            HashSet<string> shaderUsedUbs = new(StringComparer.Ordinal);
-            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
-                result,
-                @"^cbuffer\s+type_([A-Za-z_][A-Za-z0-9_]*)\s*:",
-                System.Text.RegularExpressions.RegexOptions.Multiline))
-            {
-                shaderUsedUbs.Add(m.Groups[1].Value.ToLowerInvariant());
-            }
-
-            Dictionary<(string, string), List<int>> anonsByType = new();
-            for (int i = 0; i < anons.Count; i++)
-            {
-                if (string.IsNullOrEmpty(anons[i].UbmtKind)) continue;
-                var key = (anons[i].UbmtKind, anons[i].HlslType);
-                if (!anonsByType.TryGetValue(key, out List<int>? list))
-                {
-                    list = new List<int>();
-                    anonsByType[key] = list;
-                }
-                list.Add(i);
-            }
-            Dictionary<int, string> rename = new();
-            HashSet<int> claimedByOrdered = new();
-            foreach (KeyValuePair<(string UbmtKind, string HlslType), List<int>> grp in anonsByType)
-            {
-                List<int> bySlot = new(grp.Value);
-                bySlot.Sort((a, b) => int.Parse(anons[a].SlotIdx).CompareTo(int.Parse(anons[b].SlotIdx)));
-                List<List<int>> runs = new();
-                List<int> currentRun = new();
-                int prevSlot = int.MinValue;
-                foreach (int idx in bySlot)
-                {
-                    int s = int.Parse(anons[idx].SlotIdx);
-                    if (currentRun.Count > 0 && s > prevSlot + 1)
-                    {
-                        runs.Add(currentRun);
-                        currentRun = new List<int>();
-                    }
-                    currentRun.Add(idx);
-                    prevSlot = s;
-                }
-                if (currentRun.Count > 0) runs.Add(currentRun);
-
-                foreach (List<int> run in runs)
-                {
-                    IReadOnlyList<string>? ordered = EngineTypeUniquenessIndex.TryResolveOrderedByUbContext(
-                        grp.Key.Item1, grp.Key.Item2, shaderUsedUbs, run.Count, out string ownerUb);
-                    if (Environment.GetEnvironmentVariable("RURI_UB_DEBUG") == "1")
-                    {
-                        int firstSlot = int.Parse(anons[run[0]].SlotIdx);
-                        int lastSlot = int.Parse(anons[run[^1]].SlotIdx);
-                        string usedUbsCsv = string.Join(",", shaderUsedUbs);
-                        Console.Error.WriteLine($"[ShaderLab][rename] type=({grp.Key.Item1}|{grp.Key.Item2}) run=t{firstSlot}..t{lastSlot} count={run.Count} usedUbs=[{usedUbsCsv}] -> ownerUb={ownerUb} ordered={(ordered == null ? "<null>" : string.Join(",", ordered))}");
-                    }
-                    if (ordered == null || ordered.Count != run.Count) continue;
-                    for (int i = 0; i < run.Count; i++)
-                    {
-                        int idx = run[i];
-                        rename[idx] = $"{ownerUb}_{ordered[i]}";
-                        claimedByOrdered.Add(idx);
-                    }
-                }
-            }
-
-            ApplyUsagePatternMatches(result, anons, rename, claimedByOrdered);
-
-            ApplyMaterialTextureOrder(result, anons, rename, claimedByOrdered, materialTextureOrder);
-
-
-            Dictionary<(string, string), int> unclaimedByType = new();
-            for (int i = 0; i < anons.Count; i++)
-            {
-                if (claimedByOrdered.Contains(i) || string.IsNullOrEmpty(anons[i].UbmtKind)) continue;
-                (string, string) countKey = (anons[i].UbmtKind, anons[i].HlslType);
-                unclaimedByType[countKey] = unclaimedByType.GetValueOrDefault(countKey) + 1;
-            }
-
-            for (int i = 0; i < anons.Count; i++)
-            {
-                if (claimedByOrdered.Contains(i)) continue;
-                var a = anons[i];
-                if (!string.IsNullOrEmpty(a.UbmtKind)
-                    && unclaimedByType.GetValueOrDefault((a.UbmtKind, a.HlslType)) == 1
-                    && EngineTypeUniquenessIndex.TryResolveUnique(a.UbmtKind, a.HlslType, out string ubName, out string resName))
-                {
-                    rename[i] = $"{ubName}_{resName}";
-                    continue;
-                }
-                string suffix = a.Ident.StartsWith("_", StringComparison.Ordinal)
-                    ? $"{a.SlotPrefix.ToUpperInvariant()}{a.SlotIdx}"
-                    : a.Ident;
-                rename[i] = string.IsNullOrEmpty(discriminator) ? a.Ident : $"{discriminator}_{suffix}";
-            }
-
             Dictionary<string, string> identToFinal = new(StringComparer.Ordinal);
-            for (int i = 0; i < anons.Count; i++)
+            foreach (System.Text.RegularExpressions.Match m in AnonymousBindingRegex.Matches(result))
             {
-                if (!identToFinal.ContainsKey(anons[i].Ident))
-                {
-                    identToFinal[anons[i].Ident] = rename[i];
-                }
+                string ident = m.Groups["ident"].Value;
+                string suffix = ident.StartsWith('_')
+                    ? $"{m.Groups["prefix"].Value.ToUpperInvariant()}{m.Groups["slot"].Value}"
+                    : ident;
+                identToFinal.TryAdd(ident, $"{discriminator}_{suffix}");
             }
-            Dictionary<string, List<string>> finalToIdents = new(StringComparer.Ordinal);
-            foreach (KeyValuePair<string, string> kv in identToFinal)
+            foreach (IGrouping<string, string> claimed in identToFinal
+                         .GroupBy(static pair => pair.Value, static pair => pair.Key, StringComparer.Ordinal)
+                         .Where(static group => group.Count() > 1)
+                         .ToList())
             {
-                if (!finalToIdents.TryGetValue(kv.Value, out List<string>? owners))
+                foreach (string ident in claimed)
                 {
-                    owners = new List<string>();
-                    finalToIdents[kv.Value] = owners;
-                }
-                owners.Add(kv.Key);
-            }
-            foreach (KeyValuePair<string, List<string>> kv in finalToIdents)
-            {
-                if (kv.Value.Count <= 1) continue;
-                Console.Error.WriteLine(
-                    $"[ShaderLab] name collision: '{kv.Key}' claimed by {kv.Value.Count} bindings " +
-                    $"({string.Join(", ", kv.Value)}) — reverting them to anonymous identifiers " +
-                    "(a wrong symbol is worse than none).");
-                foreach (string ident in kv.Value) identToFinal[ident] = ident;
-            }
-
-            if (Environment.GetEnvironmentVariable("RURI_UB_DEBUG") == "1")
-            {
-                foreach (KeyValuePair<string, string> kv in identToFinal)
-                {
-                    Console.Error.WriteLine($"[ShaderLab][applyRename] '{kv.Key}' -> '{kv.Value}'");
+                    identToFinal.Remove(ident);
+                    collisions++;
                 }
             }
             foreach (KeyValuePair<string, string> kv in identToFinal)
@@ -897,187 +706,9 @@ internal static class ShaderLabEmitter
         return result;
     }
 
-    private static void ApplyUsagePatternMatches(
-        string hlsl,
-        List<(string Ident, string HlslType, string UbmtKind, string SlotPrefix, string SlotIdx)> anons,
-        Dictionary<int, string> rename,
-        HashSet<int> claimed)
-    {
-        Dictionary<string, string> sampleCallByIdent = new(StringComparer.Ordinal);
-        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
-            hlsl,
-            @"([TU]\d+|_\d+)\.Sample(?:Level|Bias|Grad|Cmp|CmpLevelZero)?\([^;]+;"))
-        {
-            string id = m.Groups[1].Value;
-            if (!sampleCallByIdent.ContainsKey(id))
-                sampleCallByIdent[id] = m.Value;
-        }
-
-        bool decalsGate = hlsl.Contains("View_ShowDecalsMask", StringComparison.Ordinal)
-            && System.Text.RegularExpressions.Regex.IsMatch(
-                hlsl,
-                @"View_PrimitiveSceneData\.Load<uint>\([^)]+\)\s*&\s*8u");
-        if (decalsGate)
-        {
-            List<(int AnonIdx, int Slot)> dbufCandidates = new();
-            for (int i = 0; i < anons.Count; i++)
-            {
-                if (claimed.Contains(i)) continue;
-                var a = anons[i];
-                if (a.SlotPrefix != "t") continue;
-                if (!a.HlslType.StartsWith("Texture2D", StringComparison.Ordinal)) continue;
-                if (!sampleCallByIdent.TryGetValue(a.Ident, out string? callSite)) continue;
-                if (!IsSampleUvFromScreenSpace(hlsl, callSite)) continue;
-                if (int.TryParse(a.SlotIdx, out int slot))
-                    dbufCandidates.Add((i, slot));
-            }
-            dbufCandidates.Sort((x, y) => x.Slot.CompareTo(y.Slot));
-            for (int j = 0; j + 2 < dbufCandidates.Count + 1 && j + 2 < dbufCandidates.Count; j++)
-            {
-                if (dbufCandidates[j + 1].Slot == dbufCandidates[j].Slot + 1
-                    && dbufCandidates[j + 2].Slot == dbufCandidates[j].Slot + 2)
-                {
-                    string[] dbufNames = { "DBufferATexture", "DBufferBTexture", "DBufferCTexture" };
-                    for (int k = 0; k < 3; k++)
-                    {
-                        int idx = dbufCandidates[j + k].AnonIdx;
-                        rename[idx] = $"OpaqueBasePass_{dbufNames[k]}";
-                        claimed.Add(idx);
-                    }
-                    break;                }
-            }
-        }
-
-        for (int i = 0; i < anons.Count; i++)
-        {
-            if (claimed.Contains(i)) continue;
-            var a = anons[i];
-            if (a.SlotPrefix != "t") continue;
-            if (!a.HlslType.StartsWith("Texture2D", StringComparison.Ordinal)) continue;
-            if (!sampleCallByIdent.TryGetValue(a.Ident, out string? callSite)) continue;
-            System.Text.RegularExpressions.Match assignMatch = System.Text.RegularExpressions.Regex.Match(
-                hlsl,
-                @"float4\s+(_\d+)\s*=\s*" + System.Text.RegularExpressions.Regex.Escape(callSite));
-            if (!assignMatch.Success) continue;
-            string local = assignMatch.Groups[1].Value;
-            int searchStart = assignMatch.Index + assignMatch.Length;
-            int searchEnd = Math.Min(hlsl.Length, searchStart + 2000);
-            string window = hlsl.Substring(searchStart, searchEnd - searchStart);
-            System.Text.RegularExpressions.MatchCollection layerMaskMatches =
-                System.Text.RegularExpressions.Regex.Matches(
-                    window,
-                    @"Material_LayerMask_[A-Za-z0-9_]+");
-            if (layerMaskMatches.Count < 2) continue;
-            if (!System.Text.RegularExpressions.Regex.IsMatch(
-                window,
-                @"dot\([^;]*" + System.Text.RegularExpressions.Regex.Escape(local) + @"[^;]*Material_LayerMask")) continue;
-            rename[i] = "Landscape_WeightmapTexture";
-            claimed.Add(i);
-        }
-
-        int maxMaterialN = 0;
-        System.Text.RegularExpressions.MatchCollection materialMatches =
-            System.Text.RegularExpressions.Regex.Matches(
-                hlsl,
-                @"Material_Texture2D_(\d+)\s*:\s*register");
-        foreach (System.Text.RegularExpressions.Match mm in materialMatches)
-        {
-            if (int.TryParse(mm.Groups[1].Value, out int n) && n > maxMaterialN) maxMaterialN = n;
-        }
-        if (maxMaterialN > 0)
-        {
-            List<(int AnonIdx, int Slot)> candidates = new();
-            for (int i = 0; i < anons.Count; i++)
-            {
-                if (claimed.Contains(i)) continue;
-                var a = anons[i];
-                if (a.SlotPrefix != "t") continue;
-                if (!a.HlslType.StartsWith("Texture2D", StringComparison.Ordinal)) continue;
-                if (!sampleCallByIdent.TryGetValue(a.Ident, out string? callSite)) continue;
-                if (!callSite.Contains("View_MaterialTextureMipBias", StringComparison.Ordinal)) continue;
-                if (int.TryParse(a.SlotIdx, out int slot)) candidates.Add((i, slot));
-            }
-            candidates.Sort((x, y) => x.Slot.CompareTo(y.Slot));
-            int nextN = maxMaterialN + 1;
-            foreach (var c in candidates)
-            {
-                rename[c.AnonIdx] = $"Material_Texture2D_{nextN}";
-                claimed.Add(c.AnonIdx);
-                nextN++;
-            }
-        }
-
-        for (int i = 0; i < anons.Count; i++)
-        {
-            if (claimed.Contains(i)) continue;
-            var a = anons[i];
-            if (a.SlotPrefix != "t") continue;
-            if (!a.HlslType.StartsWith("Texture2D", StringComparison.Ordinal)) continue;
-            if (!sampleCallByIdent.TryGetValue(a.Ident, out string? callSite)) continue;
-            System.Text.RegularExpressions.Match assignMatch = System.Text.RegularExpressions.Regex.Match(
-                hlsl,
-                @"float4\s+(_\d+)\s*=\s*" + System.Text.RegularExpressions.Regex.Escape(callSite));
-            if (!assignMatch.Success) continue;
-            string local = assignMatch.Groups[1].Value;
-            int searchStart = assignMatch.Index + assignMatch.Length;
-            int searchEnd = Math.Min(hlsl.Length, searchStart + 2000);
-            string window = hlsl.Substring(searchStart, searchEnd - searchStart);
-            bool zwBias = System.Text.RegularExpressions.Regex.IsMatch(
-                window, @"mad\(" + System.Text.RegularExpressions.Regex.Escape(local) + @"\.z,\s*2\.0f,\s*-1\.0f\)")
-                && System.Text.RegularExpressions.Regex.IsMatch(
-                window, @"mad\(" + System.Text.RegularExpressions.Regex.Escape(local) + @"\.w,\s*2\.0f,\s*-1\.0f\)");
-            if (!zwBias) continue;
-            rename[i] = "LandscapeParameters_NormalmapTexture";
-            claimed.Add(i);
-        }
-    }
-
-    private static bool IsSampleUvFromScreenSpace(string hlsl, string sampleCall)
-    {
-        System.Text.RegularExpressions.MatchCollection idMatches = System.Text.RegularExpressions.Regex.Matches(sampleCall, @"_\d+");
-        if (idMatches.Count < 2) return false;
-        int matchedUvComponents = 0;
-        foreach (System.Text.RegularExpressions.Match idM in idMatches)
-        {
-            string id = idM.Value;
-            if (System.Text.RegularExpressions.Regex.IsMatch(
-                hlsl,
-                @"float\s+" + System.Text.RegularExpressions.Regex.Escape(id) + @"\s*=\s*gl_FragCoord\.[xy]\s*\*\s*View_BufferSizeAndInvSize\.[zw]"))
-            {
-                matchedUvComponents++;
-            }
-        }
-        return matchedUvComponents >= 2;    }
-
-    private static string ClassifyUbmtFromHlslType(string hlslType, string slotPrefix)
-    {
-        if (string.IsNullOrEmpty(hlslType)) return string.Empty;
-
-        int lt = hlslType.IndexOf('<');
-        string head = lt < 0 ? hlslType : hlslType.Substring(0, lt);
-
-        if (head.StartsWith("RW", StringComparison.Ordinal)) return "UBMT_UAV";
-
-        if (head == "SamplerState" || head == "SamplerComparisonState") return "UBMT_SAMPLER";
-
-        if (head.StartsWith("Texture", StringComparison.Ordinal))
-        {
-            return slotPrefix == "u" ? "UBMT_UAV" : "UBMT_TEXTURE";
-        }
-
-        if (head == "ByteAddressBuffer"
-            || head == "Buffer"
-            || head == "StructuredBuffer"
-            || head == "AppendStructuredBuffer"
-            || head == "ConsumeStructuredBuffer")
-        {
-            return slotPrefix == "u" ? "UBMT_UAV" : "UBMT_SRV";
-        }
-
-        if (head == "RaytracingAccelerationStructure") return "UBMT_SRV";
-
-        return string.Empty;
-    }
+    private static readonly System.Text.RegularExpressions.Regex AnonymousBindingRegex = new(
+        @"^[A-Za-z][A-Za-z0-9_]*(?:<[^>]+>)?\s+(?<ident>[TU]\d+|_\d+)\s*:\s*register\((?<prefix>[tusb])(?<slot>\d+)",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.Multiline);
 
     private static string SanitizeIdent(string raw)
     {
@@ -1174,14 +805,6 @@ internal static class ShaderLabEmitter
         public string ContainerKey { get; set; } = string.Empty;
         public string MaterialName { get; set; } = string.Empty;
         public List<string> UsedMaterials { get; set; } = new();
-
-        public List<string> MaterialTextureOrder { get; set; } = new();
-
-        public List<int> MaterialTextureBuckets { get; set; } = new();
-
-
-
-
         public List<UeShaderLabProgramData> Programs { get; set; } = new();
         public string PropertiesBlock { get; set; } = string.Empty;
         public string SubShaderTags { get; set; } = string.Empty;

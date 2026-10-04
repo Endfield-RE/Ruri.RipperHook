@@ -23,6 +23,11 @@
     "_Glossiness": "smoothness",
     "_BumpScale": "normal_strength",
     "_Cutoff": "alpha_cutoff",
-    "_Mode": "blend_mode"
+    "_Mode": "blend_mode",
+    "_Surface": "surface_type",
+    "_AlphaClip": "alpha_clip",
+    "_SurfaceType": "surface_type",
+    "_AlphaCutoffEnable": "alpha_clip",
+    "_AlphaCutoff": "alpha_cutoff"
   }
 }

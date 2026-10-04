@@ -25,9 +25,9 @@ namespace Ruri.FModelHook.ShaderDecompiler;
 /// .shader that includes the file. So the pooled file states only what is true of the shader
 /// itself, and the map states the rest.
 ///
-/// Every map of an archive is written at once, so this is asked for the same file from many
-/// threads. One asker per file name does the writing and the rest wait on its answer, which is
-/// what keeps two threads off one path.
+/// Which files the pool already holds is read off the folder once, when the pool is opened, and
+/// kept in memory with every file this run adds: asking the disk about each of a run's variants
+/// was a seek per variant on a spinning disk, for a question the folder answers in one listing.
 /// </summary>
 internal sealed class VariantPool
 {
@@ -41,15 +41,25 @@ internal sealed class VariantPool
     private const int DigestBytes = 8;
 
     private readonly string directory;
+    private readonly OutputWriter writer;
     private readonly Lazy<bool> folder;
-    private readonly ConcurrentDictionary<string, Lazy<string>> pathByProgram = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> present;
     private int written;
     private int shared;
 
-    public VariantPool(string archiveDirectory)
+    public VariantPool(string archiveDirectory, OutputWriter writer)
     {
         directory = Path.Combine(archiveDirectory, FolderName);
+        this.writer = writer;
         folder = new Lazy<bool>(CreateFolder, LazyThreadSafetyMode.ExecutionAndPublication);
+        present = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        if (Directory.Exists(directory))
+        {
+            foreach (string file in Directory.EnumerateFiles(directory))
+            {
+                present.TryAdd(Path.GetFileName(file), 0);
+            }
+        }
     }
 
     /// <summary>How many files this run put in the pool, and how many writes the pool absorbed.</summary>
@@ -58,32 +68,24 @@ internal sealed class VariantPool
     public int Shared => Volatile.Read(ref shared);
 
     /// <summary>
-    /// The pool file holding this text, written if it is not there yet. The name carries the
-    /// variant's own keyword so a reader can still tell what it is, a digest of the text
-    /// so two spellings of one shader never land on the same name, and the extension of the
-    /// language the text is actually in: a ray-tracing stage comes out as GLSL, and a GLSL body
-    /// under an <c>.hlsl</c> name is a lie every tool downstream believes.
+    /// The pool file holding this text, queued for writing if the pool does not hold it yet. The
+    /// name carries the variant's own keyword so a reader can still tell what it is, a digest of
+    /// the text so two spellings of one shader never land on the same name, and the extension of
+    /// the language the text is actually in: a ray-tracing stage comes out as GLSL, and a GLSL
+    /// body under an <c>.hlsl</c> name is a lie every tool downstream believes.
     /// </summary>
     public string Include(string variantKeyword, string extension, string text)
     {
         string fileName = variantKeyword + "_" + Digest(text) + extension;
-        return pathByProgram
-            .GetOrAdd(fileName, name => new Lazy<string>(() => Write(name, text), LazyThreadSafetyMode.ExecutionAndPublication))
-            .Value;
-    }
-
-    private string Write(string fileName, string text)
-    {
-        _ = folder.Value;
-        string path = Path.Combine(directory, fileName);
-        if (File.Exists(path))
+        if (present.TryAdd(fileName, 0))
         {
-            Interlocked.Increment(ref shared);
+            _ = folder.Value;
+            writer.Write(Path.Combine(directory, fileName), text);
+            Interlocked.Increment(ref written);
         }
         else
         {
-            OutputFile.Write(path, text);
-            Interlocked.Increment(ref written);
+            Interlocked.Increment(ref shared);
         }
         return FolderName + "/" + fileName;
     }

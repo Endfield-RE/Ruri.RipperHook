@@ -1,13 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using CUE4Parse.UE4.Versions;
 using Ruri.ShaderTools;
 
 namespace Ruri.FModelHook.ShaderDecompiler;
 
 public class UnrealShaderParser
 {
-    public static byte[] Parse(byte[] data, out ShaderBinaryFormat architecture, out UnrealMetadata? metadata)
+    public static byte[] Parse(byte[] data, EGame game, out ShaderBinaryFormat architecture, out UnrealMetadata? metadata)
     {
         metadata = null;
         using var reader = new BinaryReader(new MemoryStream(data));
@@ -36,6 +37,7 @@ public class UnrealShaderParser
             srt.SamplerMap = ReadUInt32Array(reader);
             srt.UnorderedAccessViewMap = ReadUInt32Array(reader);
             srt.ResourceTableLayoutHashes = ReadUInt32Array(reader);
+            srt.TextureMap = TableCarriesTextureMap(game) ? ReadUInt32Array(reader) : [];
         }
         catch
         {
@@ -383,6 +385,16 @@ public class UnrealShaderParser
         }
     }
 
+    /// <summary>
+    /// Whether the engine's D3D resource table carries a <c>TextureMap</c> after the base table. UE4's
+    /// <c>FD3D11ShaderResourceTable</c> and <c>FD3D12ShaderResourceTable</c> do: every texture member of a
+    /// uniform buffer -- the material's own textures among them -- is bound through it, while the base
+    /// table's SRV map holds buffer views only. UE5 binds textures through the SRV map and has no such field.
+    /// Unread, the map's bytes were skipped on the way to the bytecode and every texture binding a shader
+    /// takes through a uniform buffer was left without its name.
+    /// </summary>
+    private static bool TableCarriesTextureMap(EGame game) => game < EGame.GAME_UE5_0;
+
     private static List<uint> ReadUInt32Array(BinaryReader reader)
     {
         int count = reader.ReadInt32();
@@ -472,4 +484,5 @@ public struct FShaderResourceTable
     public List<uint> SamplerMap;
     public List<uint> UnorderedAccessViewMap;
     public List<uint> ResourceTableLayoutHashes;
+    public List<uint> TextureMap;
 }

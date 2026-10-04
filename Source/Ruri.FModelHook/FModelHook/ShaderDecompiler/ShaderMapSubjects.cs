@@ -3,6 +3,8 @@ using CUE4Parse.UE4.Assets;
 using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Assets.Exports.Niagara;
+using CUE4Parse.UE4.Assets.Exports.SkeletalMesh;
+using CUE4Parse.UE4.Assets.Exports.StaticMesh;
 using CUE4Parse.FileProvider.Vfs;
 using Ruri.FModelHook.BlenderBridge;
 using Ruri.FModelHook.BlenderBridge.Readers;
@@ -33,6 +35,13 @@ public sealed class ShaderMapTarget
     public UMaterialInterface? Owner { get; init; }
 
     public FMaterialShaderMap? ShaderMap { get; init; }
+
+    /// <summary>
+    /// The subject that names this map and nothing more, or null for a map whose naming holds
+    /// nothing to read again. A run that lets go of what it resolved asks it again, when the map's
+    /// turn comes, for the facts only the named asset states.
+    /// </summary>
+    public IShaderMapSubject? Source { get; init; }
 
     /// <summary>
     /// Every asset that named this map, the first of them being what the source is named after.
@@ -67,6 +76,8 @@ public sealed class MaterialSubject : IShaderMapSubject
 {
     private const int ParentChainLimit = 16;
 
+    private static readonly Type[] ReadKinds = [typeof(UMaterialInterface)];
+
     private readonly string materialPath;
 
     public MaterialSubject(string materialPath)
@@ -90,7 +101,7 @@ public sealed class MaterialSubject : IShaderMapSubject
             yield break;
         }
 
-        foreach (UObject export in package.GetExports())
+        foreach (UObject export in UnrealNativeExports.Of(package, ReadKinds))
         {
             if (export is not UMaterialInterface material)
             {
@@ -130,6 +141,7 @@ public sealed class MaterialSubject : IShaderMapSubject
                     Material = material,
                     Owner = owner,
                     ShaderMap = shaderMap,
+                    Source = this,
                 };
             }
         }
@@ -147,6 +159,9 @@ public sealed class MaterialSubject : IShaderMapSubject
 /// </summary>
 public sealed class PackageSubject : IShaderMapSubject
 {
+    /// <summary>What a package is read for: a material, a mesh naming materials, a compiled script.</summary>
+    private static readonly Type[] ReadKinds = [typeof(UMaterialInterface), typeof(UStaticMesh), typeof(USkeletalMesh), typeof(UNiagaraScript)];
+
     private readonly string packagePath;
 
     public PackageSubject(string packagePath)
@@ -167,7 +182,7 @@ public sealed class PackageSubject : IShaderMapSubject
         HashSet<string> materials = new(StringComparer.OrdinalIgnoreCase);
         bool isMaterial = false;
         bool isEffect = false;
-        foreach (UObject export in provider.LoadPackage(file).GetExports())
+        foreach (UObject export in UnrealNativeExports.Of(provider.LoadPackage(file), ReadKinds))
         {
             isMaterial |= export is UMaterialInterface;
             isEffect |= export is UNiagaraScript;
@@ -260,6 +275,8 @@ public sealed class ShaderArchiveSubject : IShaderMapSubject
 /// </summary>
 public sealed class NiagaraSubject : IShaderMapSubject
 {
+    private static readonly Type[] ReadKinds = [typeof(UNiagaraScript)];
+
     private readonly string assetPath;
 
     public NiagaraSubject(string assetPath)
@@ -282,7 +299,7 @@ public sealed class NiagaraSubject : IShaderMapSubject
             logError($"[ShaderSource] '{assetPath}' could not be loaded: {exception.GetType().Name}: {exception.Message}");
             yield break;
         }
-        foreach (UObject export in package.GetExports())
+        foreach (UObject export in UnrealNativeExports.Of(package, ReadKinds))
         {
             if (export is not UNiagaraScript script || script.LoadedScriptResources is null)
             {

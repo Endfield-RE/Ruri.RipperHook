@@ -34,7 +34,8 @@ internal sealed class Il2CppAsmCommentTransform : IAstTransform
             foreach (string line in asm.Split('\n'))
             {
                 string text = line.TrimEnd('\r', '\t', ' ');
-                if (text.Length == 0) continue;                first.AddLeadingTrivia(new Comment(" " + text, CommentType.SingleLine));
+                if (text.Length == 0) continue;
+                first.AddLeadingTrivia(new Comment(" " + text, CommentType.SingleLine));
             }
         }
     }

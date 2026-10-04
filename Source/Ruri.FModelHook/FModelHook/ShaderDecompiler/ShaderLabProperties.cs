@@ -5,36 +5,21 @@ using CUE4Parse.UE4.Assets.Exports.Material;
 namespace Ruri.FModelHook.ShaderDecompiler;
 
 /// <summary>
-/// The knobs a material exposes, written as a shaderlab Properties block, and the constant-buffer
-/// members each preshader program fills. Both are read from the expression set the map itself
-/// compiled from, so a map with no material behind it simply has none.
+/// The knobs a material exposes, written as a shaderlab Properties block, and the order its
+/// textures bind in. Both are read from the expression set the map itself compiled from, so a
+/// map with no material behind it simply has none.
 /// </summary>
 internal static class ShaderLabProperties
 {
-    public static void Build(ShaderSourceState state)
+    /// <summary>The map's properties block; whether it states any property at all.</summary>
+    public static bool Read(ShaderMapInfo map, FUniformExpressionSet uniformExpressions)
     {
-        int populated = 0;
-        foreach (ShaderMapInfo map in state.ShaderMaps)
+        string block = BuildBlock(uniformExpressions);
+        if (!string.IsNullOrEmpty(block))
         {
-            if (map.UniformExpressions is not { } uniformExpressions)
-            {
-                continue;
-            }
-
-            string block = BuildBlock(uniformExpressions);
-            if (!string.IsNullOrEmpty(block))
-            {
-                map.PropertiesBlock = block;
-                populated++;
-            }
-
-            string asset = map.PrimaryAsset;
-            MaterialConstantBufferReader.Read(uniformExpressions, asset);
-            map.MaterialTextureOrder = new List<string>(MaterialTextureOrder.Extract(uniformExpressions, out List<int> textureBuckets));
-            map.MaterialTextureBuckets = textureBuckets;
+            map.PropertiesBlock = block;
         }
-
-        state.Log($"    Properties: populated {populated}/{state.ShaderMaps.Count} shader-maps.");
+        return !string.IsNullOrEmpty(block);
     }
 
     private static string BuildBlock(FUniformExpressionSet uniformExpressions)

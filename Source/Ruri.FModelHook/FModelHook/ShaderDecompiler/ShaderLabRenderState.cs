@@ -11,29 +11,19 @@ namespace Ruri.FModelHook.ShaderDecompiler;
 /// </summary>
 internal static class ShaderLabRenderState
 {
-    public static void Build(ShaderSourceState state)
+    /// <summary>The map's tags and pass commands as the material it was named by draws; whether that states any.</summary>
+    public static bool Read(ShaderMapInfo map, UMaterialInterface material)
     {
-        int populated = 0;
-        foreach (ShaderMapInfo map in state.ShaderMaps)
+        ResolvedState resolved = Resolve(material);
+        string tagsBlock = BuildSubShaderTags(resolved);
+        string passCommands = BuildPassCommands(resolved);
+        if (string.IsNullOrEmpty(tagsBlock) && string.IsNullOrEmpty(passCommands))
         {
-            if (map.Target.Material is not { } material)
-            {
-                continue;
-            }
-
-            ResolvedState resolved = Resolve(material);
-            string tagsBlock = BuildSubShaderTags(resolved);
-            string passCommands = BuildPassCommands(resolved);
-
-            if (!string.IsNullOrEmpty(tagsBlock) || !string.IsNullOrEmpty(passCommands))
-            {
-                map.SubShaderTags = tagsBlock;
-                map.PassCommands = passCommands;
-                populated++;
-            }
+            return false;
         }
-
-        state.Log($"    RenderState: populated {populated}/{state.ShaderMaps.Count} shader-maps.");
+        map.SubShaderTags = tagsBlock;
+        map.PassCommands = passCommands;
+        return true;
     }
 
     private readonly struct ResolvedState

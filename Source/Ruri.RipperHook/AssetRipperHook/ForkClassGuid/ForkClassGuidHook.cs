@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using AssetRipper.Export.UnityProjects;
+using AssetRipper.Import.Logging;
 using AssetRipper.IO.Files;
 using AssetRipper.Primitives;
 using AssetRipper.SourceGenerated;
@@ -62,20 +63,9 @@ public class ForkClassGuidHook : CommonHook, IHookModule
             return;
         }
 
-        Console.WriteLine(
-            $"    [+] ForkClassGuid: classId {classID} 不是官方 Unity 类,引用发 {guid} 而非 deadbeef"
-            + $"({ClassName(classID) ?? "类名未知,查 TypeTree/<major>/<版本>/classes.json"})");
-    }
-
-    private static string? ClassName(int classID)
-    {
-        try
-        {
-            return TypeTreeDatabase.GetReleaseRoot((ClassIDType)classID, TypeTreeDatabase.ActiveVersion)?.TypeName;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
+        string? className = TypeTreeDatabase.GetReleaseRoot((ClassIDType)classID, TypeTreeDatabase.ActiveVersion)?.TypeName;
+        Logger.Info(LogCategory.Export,
+            $"[ForkClassGuid] classId {classID} 不是官方 Unity 类,引用发 {guid} 而非 deadbeef"
+            + $"({className ?? "类名未知,查 TypeTree/<major>/<版本>/classes.json"})");
     }
 }

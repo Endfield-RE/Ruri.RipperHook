@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading;
 using AssetRipper.Assets;
 using AssetRipper.Assets.Generics;
+using AssetRipper.Export.Modules.Shaders;
 using AssetRipper.Export.Modules.Shaders.Extensions;
 using AssetRipper.Export.Modules.Shaders.ShaderBlob;
 using AssetRipper.Export.UnityProjects;
@@ -22,6 +23,7 @@ using AssetRipper.SourceGenerated.Subclasses.SerializedSubProgram;
 using AssetRipper.SourceGenerated.NativeEnums.Global;
 using Ruri.RipperHook;
 using Ruri.ShaderTools;
+using Ruri.ShaderTools.Binding;
 using Ruri.ShaderTools.Unity.ShaderLab;
 using Ruri.ShaderTools.Pipeline.Frontend;
 using MeshChannel = AssetRipper.SourceGenerated.Extensions.Enums.Shader.ShaderChannel.ShaderChannel;
@@ -42,7 +44,25 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
         GPUPlatform PickPlatform(IShader shader, IReadOnlyCollection<GPUPlatform> available, GPUPlatform defaultChoice) => defaultChoice;
 
-        IReadOnlyList<(string Stage, byte[] Binary)>? SplitProgramPayload(byte[] programData, GPUPlatform platform, string stage, UnityVersion version) => null;
+        /// <summary>
+        /// The stage modules one program's payload holds, when the engine packs several into one program; the program type
+        /// tells such a payload from a stock one.
+        /// </summary>
+        IReadOnlyList<(string Stage, byte[] Binary)>? SplitProgramPayload(byte[] programData, int programType, GPUPlatform platform, string stage, UnityVersion version) => null;
+
+        /// <summary>The platform a program type the stock enumeration does not know runs on, for an engine that adds such types.</summary>
+        GPUPlatform PlatformOfProgramType(int programType) => GPUPlatform.Unknown;
+
+        IReadOnlyList<IModuleSymbolBinder> SymbolBinders => Array.Empty<IModuleSymbolBinder>();
+
+        /// <summary>
+        /// The descriptor sets an engine serializes beside the fields the stock classes hold for these parameters, with
+        /// names as indices into the pass's name table.
+        /// </summary>
+        IReadOnlyList<DescriptorSetParameter> DescriptorSetsOf(ISerializedProgramParameters parameters) => Array.Empty<DescriptorSetParameter>();
+
+        /// <summary>What the engine writes into a parameter entry after the stock sections, read into the program.</summary>
+        void ReadTrailingParameterSections(int blobVersion, AssetReader reader, ShaderSubProgram target) { }
     }
 
     public static IShaderExportObserver? Observer;
@@ -205,11 +225,12 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
         int slotStart = result.Count;
 
+        TrailingParameterSectionsReader? trailingSections = Observer is { } observer ? observer.ReadTrailingParameterSections : null;
         foreach (ShaderReadSource source in EnumerateProgramSources(program, shader.Collection.Version, platform))
         {
             ShaderSubProgram subProgram = source.ParameterBlobIndex is uint paramBlobIndex
-                ? blob.GetSubProgram(source.BlobIndex, paramBlobIndex)
-                : blob.GetSubProgram(source.BlobIndex);
+                ? blob.GetSubProgram(source.BlobIndex, paramBlobIndex, trailingSections)
+                : blob.GetSubProgram(source.BlobIndex, trailingSections);
 
             if (subProgram.ProgramData.Length == 0)
             {
@@ -218,7 +239,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
             List<(string Stage, byte[] Binary)> binaries = [];
             IReadOnlyList<(string Stage, byte[] Binary)>? split =
-                Observer?.SplitProgramPayload(subProgram.ProgramData, platform, stage, shader.Collection.Version);
+                Observer?.SplitProgramPayload(subProgram.ProgramData, subProgram.ProgramType, platform, stage, shader.Collection.Version);
             if (split is not null)
             {
                 binaries.AddRange(split);
@@ -518,7 +539,55 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             });
         }
 
+        IReadOnlyList<DescriptorSetParameter> descriptorSets = Observer?.DescriptorSetsOf(parameters) ?? Array.Empty<DescriptorSetParameter>();
+        AppendDescriptorSets(data, descriptorSets.Select(set => new DescriptorSetParameter
+        {
+            Name = set.NameIndex < 0 ? set.Name : resolveName(set.NameIndex),
+            NameIndex = set.NameIndex,
+            SetId = set.SetId,
+            MaxBindingIndex = set.MaxBindingIndex,
+            Bindings = set.Bindings.Select(binding => binding with
+            {
+                Name = binding.NameIndex < 0 ? binding.Name : resolveName(binding.NameIndex),
+            }).ToList(),
+        }));
+
         return data;
+    }
+
+    /// <summary>
+    /// Adds descriptor sets the way the engine binds them: the bindings of every statement of a set land in the one set
+    /// of that id, each in the slot its binding number names. Two statements of one slot that disagree leave no single
+    /// table to bind by.
+    /// </summary>
+    private static void AppendDescriptorSets(SerializedProgramData target, IEnumerable<DescriptorSetParameter> sets)
+    {
+        foreach (DescriptorSetParameter set in sets)
+        {
+            DescriptorSetParameter? held = target.DescriptorSetParameters.FirstOrDefault(existing => existing.SetId == set.SetId);
+            if (held is null)
+            {
+                held = new DescriptorSetParameter(set.Name, set.SetId) { NameIndex = set.NameIndex };
+                target.DescriptorSetParameters.Add(held);
+            }
+            held.MaxBindingIndex = Math.Max(held.MaxBindingIndex, set.MaxBindingIndex);
+
+            foreach (SetBinding binding in set.Bindings)
+            {
+                SetBinding? slot = held.Bindings.FirstOrDefault(existing => existing.BindingIndex == binding.BindingIndex);
+                if (slot is null)
+                {
+                    held.Bindings.Add(binding);
+                }
+                else if (slot.Name != binding.Name || slot.DescriptorType != binding.DescriptorType
+                    || slot.PackedBinding != binding.PackedBinding || slot.PackedInfo != binding.PackedInfo)
+                {
+                    throw new InvalidDataException(
+                        $"set {set.SetId} binding {binding.BindingIndex} is stated as '{slot.Name}' (type {slot.DescriptorType}) "
+                        + $"and as '{binding.Name}' (type {binding.DescriptorType})");
+                }
+            }
+        }
     }
 
     private static List<ShaderSymbolPass> BuildSymbols(List<ShaderReadPass> reads)
@@ -530,7 +599,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             SerializedProgramData symbols = new()
             {
                 EntryPoint = "main",
-                DebugName = $"{read.ShaderName}/SubShader{read.SubShaderIndex}/Pass{read.PassIndex}/{read.Stage}/{read.SubProgram.GetProgramType(read.Version)}/{read.BlobIndex}",
+                DebugName = $"{read.ShaderName}/SubShader{read.SubShaderIndex}/Pass{read.PassIndex}/{read.Stage}/{ProgramTypeName(read.Version, read.SubProgram.ProgramType)}/{read.BlobIndex}",
             };
 
             AppendSymbols(symbols, read.CommonSymbols);
@@ -539,7 +608,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
             observer?.OnPassSymbolsRead(symbols, read.SubProgram, new ShaderReadContext(
                 read.ShaderName, read.SubShaderIndex, read.PassIndex, read.BlobIndex, read.Version, read.Stage,
-                ProgramTypeToPlatform(read.SubProgram.GetProgramType(read.Version)),
+                PlatformOf(read.Version, read.SubProgram.ProgramType),
                 read.CommonSymbols, read.ParameterSymbols));
 
             result.Add(new ShaderSymbolPass(read, symbols));
@@ -550,7 +619,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             p.Read.SubShaderIndex,
             p.Read.PassIndex,
             p.Read.Stage,
-            ProgramTypeToPlatform(p.Read.SubProgram.GetProgramType(p.Read.Version)) == GPUPlatform.D3D11,
+            PlatformOf(p.Read.Version, p.Read.SubProgram.ProgramType) == GPUPlatform.D3D11,
             p.Read.BlobIndex,
             p.Read.Binary,
             p.Read.KeywordIndices)).ToList());
@@ -592,25 +661,16 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
 
     private static void DecompileAndWritePasses(IShader shader, List<ShaderSymbolPass> symbols, UnityShaderMetadata unityMetadata, string outputPath)
     {
-        string failuresRoot = outputPath + ".failures";
         int total = symbols.Count;
         var passStems = new string[total];
         var requests = new (byte[] Binary, DecompileOptions Options)[total];
-
-        string? dumpInputDir = Environment.GetEnvironmentVariable("RURI_DUMP_INPUT_DIR");
+        IReadOnlyList<IModuleSymbolBinder> binders = Observer?.SymbolBinders ?? Array.Empty<IModuleSymbolBinder>();
 
         for (int i = 0; i < total; i++)
         {
             ShaderSymbolPass pass = symbols[i];
             string passStem = $"sub{pass.Read.SubShaderIndex}.pass{pass.Read.PassIndex}.{pass.Read.Stage.ToLowerInvariant()}.blob{pass.Read.BlobIndex}.{SanitizeFileName(pass.Read.PassName)}";
             passStems[i] = passStem;
-
-            if (!string.IsNullOrEmpty(dumpInputDir))
-            {
-                Directory.CreateDirectory(dumpInputDir);
-                string safeShader = SanitizeFileName(shader.Name);
-                File.WriteAllBytes(Path.Combine(dumpInputDir, $"{safeShader}.{passStem}.input.bin"), pass.Read.Binary);
-            }
 
             requests[i] = (pass.Read.Binary, new DecompileOptions
             {
@@ -619,8 +679,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
                 UnityMetadata = unityMetadata,
                 ShaderModel = 51,
                 VertexInputs = VertexInputsOf(pass.Read),
-                DebugDumpDirectory = Path.Combine(failuresRoot, passStem),
-                DebugDumpStem = "with-symbols",
+                SymbolBinders = binders,
             });
         }
 
@@ -636,7 +695,6 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             {
                 Console.Error.WriteLine($"[ShaderDecompile] RURI_STRICT_SHADER_EXPORT: aborting on first failure  E{shader.Name} {passStems[idx]}");
                 Console.Error.WriteLine(r.ErrorMessage);
-                Console.Error.WriteLine($"Debug dump: {Path.Combine(failuresRoot, passStems[idx])}");
                 Environment.Exit(1);
             }
         });
@@ -770,7 +828,8 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
             charCount += nl.Length;
             charCount += subShaderPrefix.Length + DecimalDigitCount(pass.Read.SubShaderIndex);
             charCount += passInfix.Length + DecimalDigitCount(pass.Read.PassIndex);
-            charCount += blobInfix.Length + DecimalDigitCount(pass.Read.BlobIndex);            charCount += nl.Length;
+            charCount += blobInfix.Length + DecimalDigitCount(pass.Read.BlobIndex);
+            charCount += nl.Length;
 
             charCount += passNamePrefix.Length + (pass.Read.PassName?.Length ?? 0) + nl.Length;
 
@@ -954,6 +1013,8 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         {
             target.BufferParameters.Add(buffer);
         }
+
+        AppendDescriptorSets(target, source.DescriptorSetParameters);
     }
 
     private static void AppendRuntimeSymbols(SerializedProgramData target, ShaderSubProgram subProgram)
@@ -997,6 +1058,8 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         {
             target.BufferParameters.Add(buffer);
         }
+
+        AppendDescriptorSets(target, subProgram.DescriptorSetParameters);
     }
 
     private static Dictionary<int, string> BuildNameTable(AccessDictionaryBase<Utf8String, int> nameIndices)
@@ -1071,9 +1134,7 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
                 {
                     SerializedPlayerSubProgram playerSubProgram = group[i];
                     uint? parameterBlobIndex = paramGroup is not null && i < paramGroup.Count ? paramGroup[i] : null;
-                    ShaderGpuProgramType unityType = ToUnityProgramType(version, playerSubProgram.GpuProgramType);
-                    GPUPlatform resolvedPlatform = ProgramTypeToPlatform(unityType);
-                    Console.WriteLine($"[ShaderEnum]   Player group={groupIndex} index={i} blob={playerSubProgram.BlobIndex} paramBlob={(parameterBlobIndex.HasValue ? parameterBlobIndex.Value.ToString() : "<none>")} rawType={playerSubProgram.GpuProgramType} unityType={unityType} platform={resolvedPlatform} keywords=[{string.Join(",", playerSubProgram.KeywordIndices ?? [])}]");
+                    Console.WriteLine($"[ShaderEnum]   Player group={groupIndex} index={i} blob={playerSubProgram.BlobIndex} paramBlob={(parameterBlobIndex.HasValue ? parameterBlobIndex.Value.ToString() : "<none>")} rawType={playerSubProgram.GpuProgramType} unityType={ProgramTypeName(version, playerSubProgram.GpuProgramType)} platform={PlatformOf(version, playerSubProgram.GpuProgramType)} keywords=[{string.Join(",", playerSubProgram.KeywordIndices ?? [])}]");
                 }
             }
         }
@@ -1081,44 +1142,62 @@ public sealed class ShaderRuriDecompileExporter : ShaderExporterBase
         for (int i = 0; i < program.SubPrograms.Count; i++)
         {
             ISerializedSubProgram subProgram = program.SubPrograms[i];
-            ShaderGpuProgramType unityType = ToUnityProgramType(version, (sbyte)subProgram.GpuProgramType);
-            GPUPlatform resolvedPlatform = ProgramTypeToPlatform(unityType);
-            Console.WriteLine($"[ShaderEnum]   Flat index={i} blob={subProgram.BlobIndex} rawType={(sbyte)subProgram.GpuProgramType} unityType={unityType} platform={resolvedPlatform} keywords=[{string.Join(",", subProgram.KeywordIndices ?? [])}]");
+            Console.WriteLine($"[ShaderEnum]   Flat index={i} blob={subProgram.BlobIndex} rawType={(sbyte)subProgram.GpuProgramType} unityType={ProgramTypeName(version, (sbyte)subProgram.GpuProgramType)} platform={PlatformOf(version, (sbyte)subProgram.GpuProgramType)} keywords=[{string.Join(",", subProgram.KeywordIndices ?? [])}]");
         }
     }
 
     private static bool MatchesPlatform(UnityVersion version, sbyte rawType, GPUPlatform platform)
+        => PlatformOf(version, rawType) == platform;
+
+    /// <summary>
+    /// The platform a program of this raw type runs on: the stock enumeration's, else the one the engine states for a type
+    /// it added. A type neither knows has no platform to export for.
+    /// </summary>
+    private static GPUPlatform PlatformOf(UnityVersion version, int rawType)
     {
-        ShaderGpuProgramType ut = ToUnityProgramType(version, rawType);
-        return ProgramTypeToPlatform(ut) == platform;
+        if (TryToUnityProgramType(version, rawType, out ShaderGpuProgramType type))
+        {
+            return ProgramTypeToPlatform(type);
+        }
+
+        GPUPlatform engine = Observer?.PlatformOfProgramType(rawType) ?? GPUPlatform.Unknown;
+        return engine != GPUPlatform.Unknown
+            ? engine
+            : throw new NotSupportedException($"Unsupported gpu program type {rawType} for Unity {version}");
     }
 
-    private static ShaderGpuProgramType ToUnityProgramType(UnityVersion version, sbyte rawType)
+    private static string ProgramTypeName(UnityVersion version, int rawType)
+        => TryToUnityProgramType(version, rawType, out ShaderGpuProgramType type) ? type.ToString() : $"{PlatformOf(version, rawType)}Type{rawType}";
+
+    private static bool TryToUnityProgramType(UnityVersion version, int value, out ShaderGpuProgramType type)
     {
-		int value = rawType;
-		if (value < 0)
-		{
-			throw new NotSupportedException($"Unsupported negative gpu program type {value}");
-		}
+        type = ShaderGpuProgramType.Unknown;
+        if (value < 0)
+        {
+            throw new NotSupportedException($"Unsupported negative gpu program type {value}");
+        }
 
-		if (ShaderGpuProgramTypeExtensions.GpuProgramType55Relevant(version))
-		{
-			if (Enum.IsDefined(typeof(ShaderGpuProgramType55), value))
-			{
-				return ((ShaderGpuProgramType55)value).ToGpuProgramType();
-			}
+        if (ShaderGpuProgramTypeExtensions.GpuProgramType55Relevant(version))
+        {
+            if (Enum.IsDefined(typeof(ShaderGpuProgramType55), value))
+            {
+                type = ((ShaderGpuProgramType55)value).ToGpuProgramType();
+                return true;
+            }
 
-			if (Enum.IsDefined(typeof(ShaderGpuProgramType), value))
-			{
-				return (ShaderGpuProgramType)value;
-			}
-		}
-		else if (Enum.IsDefined(typeof(ShaderGpuProgramType53), value))
-		{
-			return ((ShaderGpuProgramType53)value).ToGpuProgramType();
-		}
+            if (Enum.IsDefined(typeof(ShaderGpuProgramType), value))
+            {
+                type = (ShaderGpuProgramType)value;
+                return true;
+            }
+        }
+        else if (Enum.IsDefined(typeof(ShaderGpuProgramType53), value))
+        {
+            type = ((ShaderGpuProgramType53)value).ToGpuProgramType();
+            return true;
+        }
 
-		throw new NotSupportedException($"Unsupported gpu program type {value} for Unity {version}");
+        return false;
     }
 
     private static GPUPlatform ProgramTypeToPlatform(ShaderGpuProgramType type)

@@ -11,7 +11,8 @@ internal static class Il2CppHelperNamer
     private static ApplicationAnalysisContext _app;
     private static readonly Dictionary<ulong, string> _cache = new();
     private static readonly Dictionary<ulong, bool> _reachesRaise = new();
-    private static ulong _raiseA;    private static ulong _raiseB;
+    private static ulong _raiseA;
+    private static ulong _raiseB;
     public static string TryGetName(ApplicationAnalysisContext app, ulong address)
     {
         if (!ReferenceEquals(_app, app))
@@ -31,69 +32,74 @@ internal static class Il2CppHelperNamer
 
     private static string Analyze(ApplicationAnalysisContext app, ulong address)
     {
-        Il2CppBinary binary = LibCpp2IlMain.Binary;
-        if (binary == null || binary.is32Bit)
+        Il2CppBinary binary = app.Binary;
+        if (binary.is32Bit)
             return null;
-        try
+        long raw = binary.MapVirtualAddressToRaw(address, false);
+        if (raw < 0)
+            return null;
+        byte[] code = binary.ReadByteArrayAtRawAddress(raw, 96);
+        if (code == null || code.Length == 0)
+            return null;
+
+        Decoder decoder = Decoder.Create(64, new ByteArrayCodeReader(code), address);
+        ulong end = address + (ulong)code.Length;
+        string typeName = null;
+        bool throwsLike = false;
+        bool tailCalls = false;
+        bool sawInt3 = false;
+        bool sawCondBranch = false;
+        bool reachesRaiseDirect = false;
+        List<ulong> callTargets = null;
+        int guard = 0;
+        while (decoder.IP < end && guard++ < 40)
         {
-            long raw = binary.MapVirtualAddressToRaw(address, false);
-            if (raw < 0)
-                return null;
-            byte[] code = binary.ReadByteArrayAtRawAddress(raw, 96);
-            if (code == null || code.Length == 0)
-                return null;
+            decoder.Decode(out Instruction insn);
+            if (insn.IsInvalid)
+                break;
 
-            Decoder decoder = Decoder.Create(64, new ByteArrayCodeReader(code), address);
-            ulong end = address + (ulong)code.Length;
-            string typeName = null;            bool throwsLike = false;            bool tailCalls = false;            bool sawInt3 = false;            bool sawCondBranch = false;            bool reachesRaiseDirect = false;            List<ulong> callTargets = null;            int guard = 0;
-            while (decoder.IP < end && guard++ < 40)
+            if (typeName == null && insn.Op1Kind == OpKind.Memory
+                && (insn.IsIPRelativeMemoryOperand || insn.MemoryBase == Register.None) && insn.MemoryIndex == Register.None)
             {
-                decoder.Decode(out Instruction insn);
-                if (insn.IsInvalid)
-                    break;
-
-                if (typeName == null && insn.Op1Kind == OpKind.Memory
-                    && (insn.IsIPRelativeMemoryOperand || insn.MemoryBase == Register.None) && insn.MemoryIndex == Register.None)
-                {
-                    string s = ReadCString(binary, insn.MemoryDisplacement64);
-                    if (IsExceptionTypeName(s))
-                        typeName = s;
-                }
-                if ((insn.Mnemonic == Mnemonic.Call || insn.Mnemonic == Mnemonic.Jmp)
-                    && insn.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32)
-                {
-                    ulong t = insn.NearBranchTarget;
-                    if (IsRaise(t))
-                        reachesRaiseDirect = true;
-                    else if (t < address || t >= end)
-                        (callTargets ??= new()).Add(t);
-                }
-                if (insn.Mnemonic == Mnemonic.Call && insn.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32
-                    && Il2CppAsmAnnotator.IsAllocOrRaiseFunction(app, insn.NearBranchTarget))
-                    throwsLike = true;
-                if (insn.Mnemonic == Mnemonic.Int3)
-                    throwsLike = true;
-                if (insn.FlowControl == FlowControl.ConditionalBranch)
-                    sawCondBranch = true;                if (insn.Mnemonic == Mnemonic.Jmp && insn.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32)
-                {
-                    ulong jt = insn.NearBranchTarget;
-                    if (jt < address || jt >= end) { tailCalls = true; break; }                }
-                if (insn.Mnemonic == Mnemonic.Ret)
-                    break;
-                if (insn.Mnemonic == Mnemonic.Int3)
-                {
-                    sawInt3 = true;
-                    break;
-                }
+                string s = ReadCString(binary, insn.MemoryDisplacement64);
+                if (IsExceptionTypeName(s))
+                    typeName = s;
             }
-
-            if (typeName != null && (throwsLike || tailCalls))
-                return "il2cpp_throw_" + typeName;
-
-            if (sawInt3 && !sawCondBranch && (reachesRaiseDirect || AnyReachesRaise(binary, callTargets)))
-                return "il2cpp_codegen_raise";
+            if ((insn.Mnemonic == Mnemonic.Call || insn.Mnemonic == Mnemonic.Jmp)
+                && insn.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32)
+            {
+                ulong t = insn.NearBranchTarget;
+                if (IsRaise(t))
+                    reachesRaiseDirect = true;
+                else if (t < address || t >= end)
+                    (callTargets ??= new()).Add(t);
+            }
+            if (insn.Mnemonic == Mnemonic.Call && insn.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32
+                && Il2CppAsmAnnotator.IsAllocOrRaiseFunction(app, insn.NearBranchTarget))
+                throwsLike = true;
+            if (insn.Mnemonic == Mnemonic.Int3)
+                throwsLike = true;
+            if (insn.FlowControl == FlowControl.ConditionalBranch)
+                sawCondBranch = true;
+            if (insn.Mnemonic == Mnemonic.Jmp && insn.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32)
+            {
+                ulong jt = insn.NearBranchTarget;
+                if (jt < address || jt >= end) { tailCalls = true; break; }
+            }
+            if (insn.Mnemonic == Mnemonic.Ret)
+                break;
+            if (insn.Mnemonic == Mnemonic.Int3)
+            {
+                sawInt3 = true;
+                break;
+            }
         }
-        catch { }
+
+        if (typeName != null && (throwsLike || tailCalls))
+            return "il2cpp_throw_" + typeName;
+
+        if (sawInt3 && !sawCondBranch && (reachesRaiseDirect || AnyReachesRaise(binary, callTargets)))
+            return "il2cpp_codegen_raise";
         return null;
     }
 
@@ -116,36 +122,33 @@ internal static class Il2CppHelperNamer
             return false;
         if (_reachesRaise.TryGetValue(addr, out bool cached))
             return cached;
-        _reachesRaise[addr] = false;        bool result = false;
-        try
+        _reachesRaise[addr] = false;
+        bool result = false;
+        long raw = binary.MapVirtualAddressToRaw(addr, false);
+        if (raw >= 0)
         {
-            long raw = binary.MapVirtualAddressToRaw(addr, false);
-            if (raw >= 0)
+            byte[] code = binary.ReadByteArrayAtRawAddress(raw, 96);
+            if (code != null && code.Length > 0)
             {
-                byte[] code = binary.ReadByteArrayAtRawAddress(raw, 96);
-                if (code != null && code.Length > 0)
+                Decoder decoder = Decoder.Create(64, new ByteArrayCodeReader(code), addr);
+                ulong end = addr + (ulong)code.Length;
+                int guard = 0;
+                while (decoder.IP < end && guard++ < 40)
                 {
-                    Decoder decoder = Decoder.Create(64, new ByteArrayCodeReader(code), addr);
-                    ulong end = addr + (ulong)code.Length;
-                    int guard = 0;
-                    while (decoder.IP < end && guard++ < 40)
+                    decoder.Decode(out Instruction insn);
+                    if (insn.IsInvalid)
+                        break;
+                    if ((insn.Mnemonic == Mnemonic.Call || insn.Mnemonic == Mnemonic.Jmp)
+                        && insn.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32)
                     {
-                        decoder.Decode(out Instruction insn);
-                        if (insn.IsInvalid)
-                            break;
-                        if ((insn.Mnemonic == Mnemonic.Call || insn.Mnemonic == Mnemonic.Jmp)
-                            && insn.Op0Kind is OpKind.NearBranch64 or OpKind.NearBranch32)
-                        {
-                            ulong t = insn.NearBranchTarget;
-                            if (IsRaise(t) || ReachesRaise(binary, t, depth - 1)) { result = true; break; }
-                        }
-                        if (insn.Mnemonic is Mnemonic.Ret or Mnemonic.Int3)
-                            break;
+                        ulong t = insn.NearBranchTarget;
+                        if (IsRaise(t) || ReachesRaise(binary, t, depth - 1)) { result = true; break; }
                     }
+                    if (insn.Mnemonic is Mnemonic.Ret or Mnemonic.Int3)
+                        break;
                 }
             }
         }
-        catch { }
         _reachesRaise[addr] = result;
         return result;
     }
@@ -167,13 +170,8 @@ internal static class Il2CppHelperNamer
 
     private static string ReadCString(Il2CppBinary binary, ulong virtualAddress)
     {
-        long raw;
-        try
-        {
-            if (!binary.TryMapVirtualAddressToRaw(virtualAddress, out raw))
-                return null;
-        }
-        catch { return null; }
+        if (!binary.TryMapVirtualAddressToRaw(virtualAddress, out long raw))
+            return null;
         if (raw < 0 || raw >= binary.RawLength)
             return null;
         System.Text.StringBuilder sb = new();
@@ -181,9 +179,7 @@ internal static class Il2CppHelperNamer
         {
             if (raw + i >= binary.RawLength)
                 return null;
-            byte c;
-            try { c = binary.GetByteAtRawAddress((ulong)(raw + i)); }
-            catch { return null; }
+            byte c = binary.GetByteAtRawAddress((ulong)(raw + i));
             if (c == 0)
                 break;
             if (c < 0x20 || c > 0x7E)

@@ -198,13 +198,15 @@ public class GameBundleHook : CommonHook, IHookModule
                     {
                         continue;
                     }
-                    offset = (int)afterArray + sizeof(int);                    break;
+                    offset = (int)afterArray + sizeof(int);
+                    break;
                 }
                 case (int)ClassIDType.MonoBehaviour:
                     offset = pptrSize + sizeof(int) + pptrSize;
                     break;
                 default:
-                    offset = 0;                    break;
+                    offset = 0;
+                    break;
             }
 
             string? name = TryReadAlignedString(data, offset, bigEndian);

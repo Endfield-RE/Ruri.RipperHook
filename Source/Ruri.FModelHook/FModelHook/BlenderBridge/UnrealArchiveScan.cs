@@ -9,6 +9,7 @@ using CUE4Parse.UE4.IO.Objects;
 using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Pak.Objects;
 using CUE4Parse.UE4.VirtualFileSystem;
+using Ruri.RipperHook.BlenderBridge.Data;
 using Ruri.RipperHook.HookUtils.GameBundleHook;
 using System.Collections.Concurrent;
 
@@ -60,18 +61,21 @@ public static class UnrealArchiveScan
 
         CabRow?[] results = new CabRow?[packages.Count];
         ParallelOptions options = new() { MaxDegreeOfParallelism = HeaderParallelism };
-        Parallel.For(0, packages.Count, options, index =>
+        using (DataUnit.Begin())
         {
-            GameFile file = packages[index];
-            try
+            Parallel.For(0, packages.Count, options, index =>
             {
-                results[index] = Row(provider, reader, storeIndex, mappings, file);
-            }
-            catch (Exception exception)
-            {
-                Logger.Warning(LogCategory.Import, $"[Unreal] Scan '{file.Path}': {exception.GetType().Name}: {exception.Message}");
-            }
-        });
+                GameFile file = packages[index];
+                try
+                {
+                    results[index] = Row(provider, reader, storeIndex, mappings, file);
+                }
+                catch (Exception exception)
+                {
+                    Logger.Warning(LogCategory.Import, $"[Unreal] Scan '{file.Path}': {exception.GetType().Name}: {exception.Message}");
+                }
+            });
+        }
         foreach (var row in results)
         {
             if (row is not null)
@@ -79,7 +83,6 @@ public static class UnrealArchiveScan
                 rows.Add(row.Value);
             }
         }
-        provider.Release();
         Logger.Info(LogCategory.Import, $"[Unreal] Scanned '{reader.Name}': {packages.Count} packages, {rows.Count} rows.");
         return rows;
     }

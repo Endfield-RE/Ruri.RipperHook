@@ -19,7 +19,8 @@ internal static class SymbolInputsReader
             UsedLoadedMaterialResources = true,
         };
 
-        inputs.MaterialConstantBuffer = MaterialConstantBufferReader.Read(uniformExpressionSet, inputs.MaterialPath);
+        inputs.MaterialConstantBuffer = MaterialConstantBufferReader.Read(uniformExpressionSet, inputs.MaterialPath, out IReadOnlyList<PreshaderField> fields);
+        inputs.MaterialBufferFields = fields;
         foreach (FMaterialNumericParameterInfo parameter in uniformExpressionSet.UniformNumericParameters ?? [])
         {
             if (Info(parameter.ParameterInfo) is { } info)

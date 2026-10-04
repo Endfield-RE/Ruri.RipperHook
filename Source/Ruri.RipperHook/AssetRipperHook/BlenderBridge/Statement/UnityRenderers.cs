@@ -78,7 +78,8 @@ public sealed class UnityCameraInfo
 /// with any colour temperature apart -- and the intensity is the component's own, so a host scales
 /// the colour by the intensity in its own units. Angles are full cone angles in degrees.
 /// <see cref="VolumeFactor"/> scales what the light scatters into a participating medium; a light
-/// the engine's pipeline gives no volumetric lighting states zero.</summary>
+/// the engine's pipeline gives no volumetric lighting states zero. <see cref="SpecularFactor"/> scales the
+/// light's specular reflections; a light whose engine keeps no such multiplier states one.</summary>
 public sealed class UnityLightInfo
 {
     public required UnityNode Node { get; init; }
@@ -112,6 +113,8 @@ public sealed class UnityLightInfo
     public int ShadowResolution { get; init; }
 
     public required float VolumeFactor { get; init; }
+
+    public required float SpecularFactor { get; init; }
 
     public required bool Disabled { get; init; }
 
@@ -377,6 +380,7 @@ public static class UnityRenderers
                 AreaHeight = light.AreaSize.Y,
                 Shadows = light.Shadows.Type != 0,
                 VolumeFactor = 0f,
+                SpecularFactor = 1f,
                 Disabled = disabled,
             };
         }

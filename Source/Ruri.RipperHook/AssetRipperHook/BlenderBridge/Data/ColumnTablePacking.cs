@@ -16,12 +16,19 @@ public static class ColumnTablePacking
     }
 }
 
+/// <summary>
+/// One table as a host holds it: its buffers pinned for the host to read in place, and the table
+/// itself kept for exactly as long -- which is what keeps it open by its handle while the host
+/// searches or draws it, and lets it go the moment the host lets go.
+/// </summary>
 public sealed class PinnedTable : IDisposable
 {
     private GCHandle[] _handles;
+    private ColumnTable? _table;
 
     internal PinnedTable(string handle, ColumnTable table)
     {
+        _table = table;
         Handle = handle;
         Name = table.Name;
         RowCount = table.RowCount;
@@ -85,6 +92,7 @@ public sealed class PinnedTable : IDisposable
 
     private void Release()
     {
+        Interlocked.Exchange(ref _table, null);
         GCHandle[] held = Interlocked.Exchange(ref _handles, []);
         for (int slot = 0; slot < held.Length; slot++)
         {

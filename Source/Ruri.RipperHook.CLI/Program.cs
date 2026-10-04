@@ -99,7 +99,9 @@ internal static class Program
         {
             config.EnabledHooks.Add(id);
         }
-        string gameRoot = opts.LoadPaths.Length > 0 ? opts.LoadPaths[0] : string.Empty;
+        string gameRoot = opts.LoadPaths.Length == 0
+            ? string.Empty
+            : InstallProbe.RootOf(opts.LoadPaths[0]) ?? opts.LoadPaths[0];
         if (gameRoot.Length > 0 && !opts.Hooks.Any(static id => HookCatalog.DecoderById(id) is not null))
         {
             AddInstallDecoder(config, gameRoot);

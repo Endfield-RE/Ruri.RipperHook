@@ -1,11 +1,17 @@
 using AssetRipper.Primitives;
 using AssetRipper.SourceGenerated.Extensions.Enums.Shader;
-using AssetRipper.SourceGenerated.Extensions.Enums.Shader.GpuProgramType;
 using Ruri.ShaderTools;
 using Ruri.ShaderTools.Unity.ShaderLab;
 using Ruri.ShaderTools.Pipeline.Frontend;
 
 namespace AssetRipper.Export.Modules.Shaders.ShaderBlob;
+
+/// <summary>
+/// Reads what an engine writes into a parameter entry after the sections every Unity writes. Which sections follow is
+/// the engine's own decision, taken from the entry's version, so the reader is handed that version along with the reader
+/// standing right after the stock sections.
+/// </summary>
+public delegate void TrailingParameterSectionsReader(int blobVersion, AssetReader reader, ShaderSubProgram target);
 
 public sealed class ShaderSubProgram
 {
@@ -19,9 +25,9 @@ public sealed class ShaderSubProgram
 	private static bool HasNewTextureParams(UnityVersion version) => version.GreaterThanOrEquals(2018, 2);
 	public static bool HasMergedKeywords(UnityVersion version) => version.GreaterThanOrEquals(2021, 2);
 
-	public void Read(AssetReader reader, bool readProgramData, bool readParams)
+	public void Read(AssetReader reader, bool readProgramData, bool readParams, TrailingParameterSectionsReader? trailingSections)
 	{
-		_ = reader.ReadInt32();
+		BlobVersion = reader.ReadInt32();
 
 		if (readProgramData)
 		{
@@ -30,6 +36,7 @@ public sealed class ShaderSubProgram
 		if (readParams)
 		{
 			ReadParameters(reader);
+			trailingSections?.Invoke(BlobVersion, reader, this);
 		}
 	}
 
@@ -278,18 +285,7 @@ public sealed class ShaderSubProgram
 		}
 	}
 
-	public ShaderGpuProgramType GetProgramType(UnityVersion version)
-	{
-		if (ShaderGpuProgramTypeExtensions.GpuProgramType55Relevant(version))
-		{
-			return ((ShaderGpuProgramType55)ProgramType).ToGpuProgramType();
-		}
-		else
-		{
-			return ((ShaderGpuProgramType53)ProgramType).ToGpuProgramType();
-		}
-	}
-
+	public int BlobVersion { get; private set; }
 	public int ProgramType { get; set; }
 	public int StatsALU { get; set; }
 	public int StatsTEX { get; set; }
@@ -307,5 +303,6 @@ public sealed class ShaderSubProgram
 	public ConstantBufferParameter[] ConstantBufferParameters { get; set; } = Array.Empty<ConstantBufferParameter>();
 	public BufferBindingParameter[] BufferBindingParameters { get; set; } = Array.Empty<BufferBindingParameter>();
 	public StructParameter[] StructParameters { get; set; } = Array.Empty<StructParameter>();
+	public List<DescriptorSetParameter> DescriptorSetParameters { get; } = new();
 	public ParserBindChannels BindChannels { get; set; } = new();
 }

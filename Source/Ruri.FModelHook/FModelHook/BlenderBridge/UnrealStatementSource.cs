@@ -116,6 +116,7 @@ public static class UnrealStatementSource
         Column[] lightColumns = new[] { "lr", "lg", "lb", "intensity", "range", "outer", "inner", "width", "height" }.Select(column => rows[column]).ToArray();
         Column shadows = rows["shadows"];
         Column volume = rows["volume"];
+        Column specular = rows["specular"];
         statement.Roots.Add(new StatementRoot(seed, 0, label, "placements")
         {
             Forward = CharacterForward(UnrealTitles.Of(Session.GameRoot)),
@@ -156,6 +157,7 @@ public static class UnrealStatementSource
                     AreaHeight = (float)lightColumns[8].Real(row),
                     Shadows = shadows.Truthy(row),
                     VolumeFactor = (float)volume.Real(row),
+                    SpecularFactor = (float)specular.Real(row),
                     Disabled = !active.Truthy(row),
                 };
             }

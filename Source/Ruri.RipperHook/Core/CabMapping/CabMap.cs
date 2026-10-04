@@ -263,25 +263,57 @@ public static class CabMap
         return cabs.ToArray();
     }
 
-    public static string[] ResolveCabsForPaths(CabTable table, IEnumerable<string> containerPaths)
+    /// <summary>Every archive that files one of these container paths.</summary>
+    public static string[] ResolveCabsForPaths(CabTable table, IEnumerable<string> containerPaths) =>
+        CabsByPath(table, containerPaths).Values.SelectMany(cabs => cabs)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    /// <summary>The one archive the map files each container path in, in one sweep of the map. A path no archive
+    /// files, or one filed in several, is refused: which asset it names is then not the map's to say.</summary>
+    public static Dictionary<string, string> CabsOf(CabTable table, IEnumerable<string> containerPaths)
     {
-        HashSet<string> queries = new(StringComparer.OrdinalIgnoreCase);
+        string[] paths = containerPaths.ToArray();
+        Dictionary<string, string[]> filed = CabsByPath(table, paths);
+        Dictionary<string, string> single = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string path in paths)
+        {
+            single[path] = filed.TryGetValue(path, out string[]? cabs) && cabs.Length == 1
+                ? cabs[0]
+                : throw new InvalidDataException(cabs is null
+                    ? $"no archive in the cabmap files '{path}'"
+                    : $"'{path}' is filed in {cabs.Length} archives: {string.Join(", ", cabs)}");
+        }
+        return single;
+    }
+
+    /// <summary>Which archives file each container path, in one sweep of the map: path -> the archives' names,
+    /// sorted. A path written <c>file##sub</c> names a sub-asset and is filed under its file. A path no archive
+    /// files is absent.</summary>
+    public static Dictionary<string, string[]> CabsByPath(CabTable table, IEnumerable<string> containerPaths)
+    {
+        Dictionary<string, List<string>> asked = new(StringComparer.OrdinalIgnoreCase);
         foreach (string path in containerPaths)
         {
             int hashIndex = path.IndexOf("##", StringComparison.Ordinal);
-            queries.Add(hashIndex >= 0 ? path[..hashIndex] : path);
+            string file = hashIndex >= 0 ? path[..hashIndex] : path;
+            if (!asked.TryGetValue(file, out List<string>? askers))
+            {
+                asked[file] = askers = [];
+            }
+            askers.Add(path);
         }
-        if (queries.Count == 0)
+        Dictionary<string, string[]> filed = new(StringComparer.OrdinalIgnoreCase);
+        if (asked.Count == 0)
         {
-            return [];
+            return filed;
         }
-        HashSet<string>.AlternateLookup<ReadOnlySpan<char>> lookup = queries.GetAlternateLookup<ReadOnlySpan<char>>();
+        Dictionary<string, List<string>>.AlternateLookup<ReadOnlySpan<char>> lookup =
+            asked.GetAlternateLookup<ReadOnlySpan<char>>();
 
-        ConcurrentBag<List<int>> partitions = new();
+        ConcurrentBag<(string File, int Id)> found = new();
         Parallel.ForEach(Partitioner.Create(0, table.Count), range =>
         {
             (int start, int end) = range;
-            List<int> local = new();
             char[] buffer = ArrayPool<char>.Shared.Rent(Math.Max(1, table.MaxContainerPathUtf8Length));
             try
             {
@@ -297,10 +329,9 @@ public static class CabMap
                             utf8 = utf8[..hashIndex];
                         }
                         int written = Encoding.UTF8.GetChars(utf8, buffer);
-                        if (lookup.Contains(buffer.AsSpan(0, written)))
+                        if (lookup.TryGetValue(buffer.AsSpan(0, written), out string? file, out List<string>? _))
                         {
-                            local.Add(id);
-                            break;
+                            found.Add((file, id));
                         }
                     }
                 }
@@ -309,22 +340,19 @@ public static class CabMap
             {
                 ArrayPool<char>.Shared.Return(buffer);
             }
-            if (local.Count > 0)
-            {
-                partitions.Add(local);
-            }
         });
 
-        List<string> cabs = new();
-        foreach (List<int> local in partitions)
+        foreach (IGrouping<string, int> group in found.GroupBy(entry => entry.File, entry => entry.Id,
+                     StringComparer.OrdinalIgnoreCase))
         {
-            foreach (int id in local)
+            string[] cabs = group.Distinct().Select(table.CabName)
+                .Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            foreach (string path in asked[group.Key])
             {
-                cabs.Add(table.CabName(id));
+                filed[path] = cabs;
             }
         }
-        cabs.Sort(StringComparer.OrdinalIgnoreCase);
-        return cabs.ToArray();
+        return filed;
     }
 
     /// <summary>Every archive that files something at or under a folder of container paths -- the

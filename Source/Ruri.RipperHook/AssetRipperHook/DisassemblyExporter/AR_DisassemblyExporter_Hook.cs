@@ -22,7 +22,8 @@ public partial class AR_DisassemblyExporter_Hook : RipperHookCommon
         while (cursor.TryGotoNext(MoveType.Before, instr => instr.OpCode == OpCodes.Ret))
         {
             cursor.EmitDelegate(FilterToScriptsOnly);
-            cursor.Index++;            injected++;
+            cursor.Index++;
+            injected++;
         }
 
         Console.WriteLine($"    [+] AR_DisassemblyExporter: injected scripts-only filter at {injected} return site(s)");
@@ -69,8 +70,10 @@ public partial class AR_DisassemblyExporter_Hook : RipperHookCommon
         int injected = 0;
         while (cursor.TryGotoNext(MoveType.Before, instr => instr.OpCode == OpCodes.Ret))
         {
-            cursor.Emit(OpCodes.Ldarg_0);            cursor.EmitDelegate(SkipStreamingAssets);
-            cursor.Index++;            injected++;
+            cursor.Emit(OpCodes.Ldarg_0);
+            cursor.EmitDelegate(SkipStreamingAssets);
+            cursor.Index++;
+            injected++;
         }
 
         Console.WriteLine($"    [+] AR_DisassemblyExporter: forced IgnoreStreamingAssets at {injected} ImportSettings ctor return site(s)");

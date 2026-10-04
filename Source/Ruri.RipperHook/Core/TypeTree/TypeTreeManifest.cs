@@ -9,7 +9,7 @@ public sealed class TypeTreeManifest
 {
     public const string BlobName = "ruri.versions";
 
-    public const int CurrentFormatVersion = 1;
+    public const int CurrentFormatVersion = 2;
 
     [JsonPropertyName("formatVersion")]
     public int FormatVersion { get; set; } = CurrentFormatVersion;
@@ -21,6 +21,15 @@ public sealed class TypeTreeManifest
     {
         [JsonPropertyName("key")]
         public string Key { get; set; } = "";
+
+        /// <summary>
+        /// The blob holding the lineage's trees as the engine spells them -- Unity's own node and type
+        /// names, the vocabulary AssetRipper's type-tree reader speaks. The blob under <see cref="Key"/>
+        /// carries the names AssetRipper generates its classes under, which this hook's interpreter
+        /// matches fields by; a lineage with one vocabulary names its own blob here.
+        /// </summary>
+        [JsonPropertyName("unityNames")]
+        public string UnityNames { get; set; } = "";
 
         [JsonPropertyName("versions")]
         public List<VersionEntry> Versions { get; set; } = new();

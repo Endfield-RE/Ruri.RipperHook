@@ -50,7 +50,8 @@ public sealed class CabTableSearch
     {
         if (sortDirection == 0 || ids.Length <= 1)
         {
-            Array.Sort(ids);            return ids;
+            Array.Sort(ids);
+            return ids;
         }
         int[] ranks = ColumnRanks(sortColumn);
 
@@ -279,7 +280,7 @@ public sealed class CabTableSearch
 
     private string DeriveField(int id, string column) => column switch
     {
-        "name" => DeriveName(id),
+        "name" => CabFolders.Name(_table, id),
         "container" => DeriveContainer(id),
         "type_names" => DeriveTypeNames(id),
         "facts" => DeriveFacts(id),
@@ -289,19 +290,6 @@ public sealed class CabTableSearch
         "deps" => _table.DependencyCount(id).ToString(),
         _ => string.Empty,
     };
-
-    private string DeriveName(int id)
-    {
-        int pathCount = _table.ContainerPathCount(id);
-        if (pathCount == 0)
-        {
-            return string.Empty;
-        }
-        string first = _table.ContainerPath(id, 0);
-        int slash = first.LastIndexOf('/');
-        string leaf = slash >= 0 ? first[(slash + 1)..] : first;
-        return pathCount > 1 ? $"{leaf} (+{pathCount - 1})" : leaf;
-    }
 
     private string DeriveContainer(int id)
     {

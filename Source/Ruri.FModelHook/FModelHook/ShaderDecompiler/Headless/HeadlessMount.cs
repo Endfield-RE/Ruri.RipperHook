@@ -36,7 +36,8 @@ public static class HeadlessMount
 
         var versions = new VersionContainer(cfg.UeVersion, cfg.TexturePlatform);
         var provider = new DefaultFileProvider(cfg.GameDirectory, SearchOption.AllDirectories, isCaseInsensitive: true, versions: versions);
-        provider.ReadShaderMaps = true;        provider.Initialize();
+        provider.ReadShaderMaps = true;
+        provider.Initialize();
 
         int submitted = provider.SubmitKeys(BuildKeys(cfg));
         provider.PostMount();
@@ -209,8 +210,16 @@ public static class HeadlessMount
             keys.Add(new KeyValuePair<FGuid, FAesKey>(new FGuid(), new FAesKey(cfg.MainAesKey)));
         foreach (HeadlessGameConfig.DynamicAesKey dk in cfg.DynamicKeys)
         {
-            try { keys.Add(new KeyValuePair<FGuid, FAesKey>(new FGuid(dk.Guid), new FAesKey(dk.Key))); }
-            catch {}
+            try
+            {
+                keys.Add(new KeyValuePair<FGuid, FAesKey>(new FGuid(dk.Guid), new FAesKey(dk.Key)));
+            }
+            catch (Exception exception) when (exception is FormatException or ArgumentException)
+            {
+                throw new InvalidDataException(
+                    $"[Headless] the game settings state dynamic AES key {dk.Guid} in a form that does not parse: {exception.Message}",
+                    exception);
+            }
         }
         return keys;
     }
